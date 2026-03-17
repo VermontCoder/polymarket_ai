@@ -155,6 +155,8 @@ def compute_reward(
     Returns:
         Reward normalized to roughly [-1, 1] range (divided by 100).
     """
+    if action == 0:
+        raise ValueError("compute_reward() must not be called with action=0")
     if not filled:
         return 0.0
 
@@ -221,6 +223,7 @@ class Environment:
         self._is_maker: bool = False
         self._limit_filled: bool = False
         self._limit_market: str = ""  # "UP" or "DOWN" for limit orders
+        self._action_step: int = 0
 
     def reset(self, episode: dict[str, Any]) -> None:
         """Initialize the environment with an episode dict.
@@ -240,6 +243,7 @@ class Environment:
         self._is_maker = False
         self._limit_filled = False
         self._limit_market = ""
+        self._action_step = 0
 
     def get_observation(self) -> dict[str, Any]:
         """Return current row's data with forbidden fields stripped.
