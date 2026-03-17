@@ -32,10 +32,13 @@ class SumTree:
     """
 
     def __init__(self, capacity: int) -> None:
-        self.capacity = capacity
+        # Round up to next power of 2 for correct binary tree layout
+        self.capacity = 1
+        while self.capacity < capacity:
+            self.capacity *= 2
         # Tree has 2 * capacity nodes (1-indexed style stored in 0-indexed
         # array of size 2 * capacity).
-        self._tree = np.zeros(2 * capacity, dtype=np.float64)
+        self._tree = np.zeros(2 * self.capacity, dtype=np.float64)
         self._write_idx = 0
         self._size = 0
 
