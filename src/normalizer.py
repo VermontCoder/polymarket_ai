@@ -1,12 +1,14 @@
 """Feature normalization pipeline for Polymarket BTC 5-minute episodes.
 
-Static features (per episode): 35 dims
+Static features (per episode): 37 dims
   [0-23]  hour one-hot (24 dims)
   [24-30] day one-hot, Mon=24..Sun=30 (7 dims)
   [31]    diff_pct_prev_session / std (0 if null)
   [32]    diff_pct_prev_session is_null flag
   [33]    diff_pct_hour / std (0 if null)
   [34]    diff_pct_hour is_null flag
+  [35]    avg_pct_variance_hour / std (0 if null)
+  [36]    avg_pct_variance_hour is_null flag
 
 Dynamic features (per row): 11 dims
   [0]  up_bid / 100 (0 if null)
@@ -31,12 +33,13 @@ import numpy as np
 class Normalizer:
     """Computes training-set statistics and encodes episode features."""
 
-    STATIC_DIM = 35
+    STATIC_DIM = 37
     DYNAMIC_DIM = 11
 
     def __init__(self) -> None:
         self.std_diff_pct_prev_session: float = 1.0
         self.std_diff_pct_hour: float = 1.0
+        self.std_avg_pct_variance_hour: float = 1.0
         self.std_diff_pct: float = 1.0
         self._fitted = False
 
@@ -52,6 +55,7 @@ class Normalizer:
         """
         prev_session_vals: list[float] = []
         hour_vals: list[float] = []
+        avg_var_hour_vals: list[float] = []
         diff_pct_vals: list[float] = []
 
         for ep in train_episodes:
@@ -59,24 +63,28 @@ class Normalizer:
                 prev_session_vals.append(ep["diff_pct_prev_session"])
             if ep.get("diff_pct_hour") is not None:
                 hour_vals.append(ep["diff_pct_hour"])
+            if ep.get("avg_pct_variance_hour") is not None:
+                avg_var_hour_vals.append(ep["avg_pct_variance_hour"])
             for row in ep["rows"]:
                 if row.get("diff_pct") is not None:
                     diff_pct_vals.append(row["diff_pct"])
 
         self.std_diff_pct_prev_session = _std(prev_session_vals)
         self.std_diff_pct_hour = _std(hour_vals)
+        self.std_avg_pct_variance_hour = _std(avg_var_hour_vals)
         self.std_diff_pct = _std(diff_pct_vals)
         self._fitted = True
 
     def encode_static(self, episode: dict[str, Any]) -> np.ndarray:
-        """Encode episode-level static features into a 35-dim vector.
+        """Encode episode-level static features into a 37-dim vector.
 
         Args:
             episode: An episode dict with keys hour, day,
-                     diff_pct_prev_session, diff_pct_hour.
+                     diff_pct_prev_session, diff_pct_hour,
+                     avg_pct_variance_hour.
 
         Returns:
-            numpy array of shape (35,) with float32 dtype.
+            numpy array of shape (37,) with float32 dtype.
         """
         assert self._fitted, "Must call fit() before encoding"
 
@@ -107,6 +115,15 @@ class Normalizer:
         else:
             vec[33] = val / self.std_diff_pct_hour
             vec[34] = 0.0
+
+        # avg_pct_variance_hour: index 35 (value), 36 (is_null)
+        val = episode.get("avg_pct_variance_hour")
+        if val is None:
+            vec[35] = 0.0
+            vec[36] = 1.0
+        else:
+            vec[35] = val / self.std_avg_pct_variance_hour
+            vec[36] = 0.0
 
         return vec
 

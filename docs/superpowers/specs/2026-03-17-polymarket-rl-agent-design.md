@@ -19,7 +19,7 @@ Build a reinforcement learning agent that profitably trades on Polymarket's BTC 
 
 ### Input Features
 
-**Static features (per episode, 35 dims):**
+**Static features (per episode, 37 dims):**
 
 | Field | Raw | Encoding | Dims |
 |-------|-----|----------|------|
@@ -27,6 +27,7 @@ Build a reinforcement learning agent that profitably trades on Polymarket's BTC 
 | `day` | 0-6 (Mon=0) | One-hot | 7 |
 | `diff_pct_prev_session` | float or null | value / training-set std, 0 if null; + `is_null` flag | 2 |
 | `diff_pct_hour` | float or null | value / training-set std, 0 if null; + `is_null` flag | 2 |
+| `avg_pct_variance_hour` | float or null | value / training-set std, 0 if null; + `is_null` flag | 2 |
 
 **Dynamic features (per row, 11 dims):**
 

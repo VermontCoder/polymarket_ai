@@ -21,7 +21,7 @@ from src.models.stacked_dqn import StackedDQN
 # Constants
 # ---------------------------------------------------------------------------
 
-STATIC_DIM = 35
+STATIC_DIM = 37
 DYNAMIC_DIM = 11
 NUM_ACTIONS = 9
 BATCH_SIZE = 4
@@ -223,12 +223,12 @@ class TestLSTMDQN:
         total_params = sum(p.numel() for p in lstm_dqn.parameters())
 
         # Break down expected counts:
-        # Static encoder: Linear(35, 16) = 35*16 + 16 = 576
+        # Static encoder: Linear(37, 16) = 37*16 + 16 = 608
         # LSTM(11, 32, 1): 4 * (11*32 + 32*32 + 32 + 32) = 4 * (352 + 1024 + 64) = 5,760
         # Q-head Linear(48, 32) = 48*32 + 32 = 1,568
         # Q-head LayerNorm(32) = 32 + 32 = 64
         # Q-head Linear(32, 9) = 32*9 + 9 = 297
-        # Total: 576 + 5760 + 1568 + 64 + 297 = 8,265
+        # Total: 608 + 5760 + 1568 + 64 + 297 = 8,297
         # (The ~8,070 in the spec is approximate; actual count depends on
         #  exact LSTM implementation details)
 
@@ -245,8 +245,8 @@ class TestLSTMDQN:
         lstm_params = sum(p.numel() for p in lstm_dqn.lstm.parameters())
         q_head_params = sum(p.numel() for p in lstm_dqn.q_head.parameters())
 
-        # Static: Linear(35, 16) = 35*16 + 16 = 576
-        assert static_params == 576
+        # Static: Linear(37, 16) = 37*16 + 16 = 608
+        assert static_params == 608
 
         # Q-head: Linear(48, 32) + LayerNorm(32) + Linear(32, 9)
         # = (48*32+32) + (32+32) + (32*9+9) = 1568 + 64 + 297 = 1929

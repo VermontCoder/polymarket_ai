@@ -4,8 +4,8 @@ Baseline feedforward model that stacks the last K dynamic observations
 instead of using recurrence.
 
 Architecture:
-  Input: concat of static features (35) + last K dynamic features (K * 11)
-  Linear(35 + K*11, 64) -> ReLU
+  Input: concat of static features (37) + last K dynamic features (K * 11)
+  Linear(37 + K*11, 64) -> ReLU
   Linear(64, 32) -> LayerNorm -> ReLU -> Dropout(0.15)
   Linear(32, 9) -> Q-values
 
@@ -34,7 +34,7 @@ class StackedDQN(BaseModel):
 
     def __init__(
         self,
-        static_dim: int = 35,
+        static_dim: int = 37,
         dynamic_dim: int = 11,
         num_actions: int = 9,
         stack_size: int = 5,

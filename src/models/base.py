@@ -23,7 +23,7 @@ class BaseModel(ABC, nn.Module):
 
     def __init__(
         self,
-        static_dim: int = 35,
+        static_dim: int = 37,
         dynamic_dim: int = 11,
         num_actions: int = 9,
     ) -> None:

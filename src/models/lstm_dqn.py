@@ -3,7 +3,7 @@
 Primary architecture (~8,070 parameters):
 
   Static Encoder:
-    Linear(35, 16) -> ReLU -> 16-dim static embedding
+    Linear(37, 16) -> ReLU -> 16-dim static embedding
 
   Dynamic Encoder (LSTM):
     LSTM(input_size=11, hidden_size=32, num_layers=1)
@@ -44,7 +44,7 @@ class LSTMDQN(BaseModel):
 
     def __init__(
         self,
-        static_dim: int = 35,
+        static_dim: int = 37,
         dynamic_dim: int = 11,
         num_actions: int = 9,
         lstm_hidden_size: int = 32,

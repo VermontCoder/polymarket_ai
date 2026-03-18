@@ -101,17 +101,19 @@ def run_visibility(
         day = episode.get("day")
         diff_prev = episode.get("diff_pct_prev_session")
         diff_hour = episode.get("diff_pct_hour")
+        avg_var_hour = episode.get("avg_pct_variance_hour")
 
         start_str = f"${start_price:,.2f}" if isinstance(start_price, (int, float)) else "N/A"
         end_str = f"${end_price:,.2f}" if isinstance(end_price, (int, float)) else "N/A"
         diff_prev_str = f"{diff_prev:+.3f}%" if diff_prev is not None else "N/A"
         diff_hour_str = f"{diff_hour:+.3f}%" if diff_hour is not None else "N/A"
+        avg_var_str = f"{avg_var_hour:.3f}%" if avg_var_hour is not None else "N/A"
         day_names = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
         day_str = day_names.get(day, str(day)) if day is not None else "N/A"
 
         print(f"\nEpisode: {session_id} | Outcome: {outcome}")
         print(f"  Start: {start_str} | End: {end_str} | Hour: {hour} | Day: {day_str}")
-        print(f"  Prev session: {diff_prev_str} | Hour trend: {diff_hour_str}")
+        print(f"  Prev session: {diff_prev_str} | Hour trend: {diff_hour_str} | Hour variance: {avg_var_str}")
         print(f"Player: {player_name}")
         print("-" * 69)
 

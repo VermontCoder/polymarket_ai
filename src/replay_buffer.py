@@ -127,7 +127,7 @@ class PrioritizedReplayBuffer:
         next_action_mask    np.array (9,) bool or None if terminal
     """
 
-    STATIC_DIM = 35
+    STATIC_DIM = 37
     DYNAMIC_DIM = 11
     NUM_ACTIONS = 9
 

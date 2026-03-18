@@ -38,6 +38,7 @@ def _make_episode(outcome="UP", num_rows=5, rows=None, **kwargs):
         "hour": 12, "day": 2,
         "start_price": 70000.0, "end_price": 70100.0,
         "diff_pct_prev_session": 0.05, "diff_pct_hour": 0.02,
+        "avg_pct_variance_hour": 0.08,
         "rows": rows,
     }
 
@@ -48,6 +49,7 @@ ALLOWED_ROW_FIELDS = {
 
 ALLOWED_EPISODE_FIELDS = {
     "hour", "day", "diff_pct_prev_session", "diff_pct_hour",
+    "avg_pct_variance_hour",
 }
 
 
@@ -255,7 +257,7 @@ class TestNormalizerNoLeak:
         norm.fit([_make_episode()])
 
         static = norm.encode_static(_make_episode())
-        assert static.shape == (35,)
+        assert static.shape == (37,)
 
         dynamic = norm.encode_dynamic(_make_row())
         assert dynamic.shape == (11,)

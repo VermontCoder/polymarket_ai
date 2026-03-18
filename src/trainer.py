@@ -351,7 +351,7 @@ class Trainer:
         # Convert to tensors
         static = torch.tensor(
             batch["static_features"], dtype=torch.float32, device=self.device
-        )  # (B, L, 35)
+        )  # (B, L, 37)
         dynamic = torch.tensor(
             batch["dynamic_features"], dtype=torch.float32, device=self.device
         )  # (B, L, 11)
@@ -380,7 +380,7 @@ class Trainer:
         B, L = actions.shape
 
         # Use static features from the first timestep (they're constant per episode)
-        static_first = static[:, 0, :]  # (B, 35)
+        static_first = static[:, 0, :]  # (B, 37)
 
         # Forward through online network with full sequence
         q_all, _ = self.online_net(static_first, dynamic)  # (B, 9) for last step

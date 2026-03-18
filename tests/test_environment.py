@@ -911,7 +911,7 @@ class TestEpisodeInfo:
 class TestIntegrationWithRealData:
     """Smoke tests using the actual data file."""
 
-    DATA_PATH = "/workspace/data/btc_polymarket_combined_20260316_230302.json"
+    DATA_PATH = "/workspace/data/btc_polymarket_combined_20260318_162249.json"
 
     @pytest.fixture
     def real_episodes(self):

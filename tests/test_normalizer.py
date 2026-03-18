@@ -17,6 +17,7 @@ def _make_episode(
     day=2,
     diff_pct_prev_session=0.05,
     diff_pct_hour=0.02,
+    avg_pct_variance_hour=0.08,
     rows=None,
 ):
     """Create a minimal episode dict for testing."""
@@ -31,6 +32,7 @@ def _make_episode(
         "end_price": 70100.0,
         "diff_pct_prev_session": diff_pct_prev_session,
         "diff_pct_hour": diff_pct_hour,
+        "avg_pct_variance_hour": avg_pct_variance_hour,
         "rows": rows,
     }
 
@@ -75,13 +77,13 @@ def _fitted_normalizer(train_episodes=None):
 # ---------------------------------------------------------------------------
 
 class TestStaticEncoding:
-    """Tests for encode_static (35-dim vector)."""
+    """Tests for encode_static (37-dim vector)."""
 
     def test_output_shape(self):
         norm = _fitted_normalizer()
         ep = _make_episode()
         static = norm.encode_static(ep)
-        assert static.shape == (35,)
+        assert static.shape == (37,)
         assert static.dtype == np.float32
 
     def test_hour_one_hot_correct_index(self):
@@ -163,6 +165,26 @@ class TestStaticEncoding:
         static = norm.encode_static(ep)
         assert static[33] == 0.0
         assert static[34] == 1.0
+
+    def test_avg_pct_variance_hour_normalized(self):
+        """Non-null avg_pct_variance_hour is divided by training std."""
+        train = [
+            _make_episode(avg_pct_variance_hour=0.10),
+            _make_episode(avg_pct_variance_hour=0.06),
+        ]
+        norm = _fitted_normalizer(train)
+        ep = _make_episode(avg_pct_variance_hour=0.08)
+        static = norm.encode_static(ep)
+        assert static[35] == pytest.approx(0.08 / norm.std_avg_pct_variance_hour, abs=1e-5)
+        assert static[36] == 0.0
+
+    def test_avg_pct_variance_hour_null(self):
+        """Null avg_pct_variance_hour encodes to (0, is_null=1)."""
+        norm = _fitted_normalizer()
+        ep = _make_episode(avg_pct_variance_hour=None)
+        static = norm.encode_static(ep)
+        assert static[35] == 0.0
+        assert static[36] == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +437,7 @@ class TestStdHelper:
 class TestIntegrationWithData:
     """Test normalizer against the actual data file."""
 
-    DATA_PATH = "/workspace/data/btc_polymarket_combined_20260316_230302.json"
+    DATA_PATH = "/workspace/data/btc_polymarket_combined_20260318_162249.json"
 
     @pytest.fixture
     def real_data(self):
@@ -442,7 +464,7 @@ class TestIntegrationWithData:
         # Encode every episode without errors
         for ep in train + val + test:
             static = norm.encode_static(ep)
-            assert static.shape == (35,)
+            assert static.shape == (37,)
             dynamic = norm.encode_episode_dynamic(ep)
             assert dynamic.shape[0] == len(ep["rows"])
             assert dynamic.shape[1] == 11
@@ -463,6 +485,7 @@ class TestIntegrationWithData:
             # is_null flags are 0 or 1
             assert static[32] in (0.0, 1.0)
             assert static[34] in (0.0, 1.0)
+            assert static[36] in (0.0, 1.0)
 
     def test_dynamic_values_in_expected_ranges(self, real_data):
         """Check that encoded dynamic features are in sensible ranges."""

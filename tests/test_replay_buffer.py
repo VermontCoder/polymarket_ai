@@ -29,7 +29,7 @@ def _make_transition(
     dynamic_val: float = 0.0,
 ) -> dict:
     """Create a minimal valid transition dict for testing."""
-    static = np.full(35, static_val, dtype=np.float32)
+    static = np.full(37, static_val, dtype=np.float32)
     dynamic = np.full(11, dynamic_val, dtype=np.float32)
     next_dynamic = None if done else np.full(11, dynamic_val + 0.1, dtype=np.float32)
     action_mask = np.ones(9, dtype=bool)
@@ -180,7 +180,7 @@ class TestPrioritizedReplayBuffer:
 
         batch = buf.sample(batch_size=8, beta=0.4)
 
-        assert batch["static_features"].shape == (8, 5, 35)
+        assert batch["static_features"].shape == (8, 5, 37)
         assert batch["dynamic_features"].shape == (8, 5, 11)
         assert batch["actions"].shape == (8, 5)
         assert batch["rewards"].shape == (8, 5)
@@ -580,7 +580,7 @@ class TestPrioritizedReplayBuffer:
         # Sample many batches
         for _ in range(100):
             batch = buf.sample(batch_size=16, beta=np.random.uniform(0.4, 1.0))
-            assert batch["static_features"].shape == (16, 8, 35)
+            assert batch["static_features"].shape == (16, 8, 37)
 
     # ------------------------------------------------------------------
     # Edge case: sample from buffer with fewer transitions than batch_size
@@ -594,7 +594,7 @@ class TestPrioritizedReplayBuffer:
 
         # Only 2 transitions but requesting batch of 8
         batch = buf.sample(batch_size=8, beta=0.4)
-        assert batch["static_features"].shape == (8, 3, 35)
+        assert batch["static_features"].shape == (8, 3, 37)
 
 
 # ===========================================================================

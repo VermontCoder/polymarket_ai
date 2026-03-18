@@ -126,7 +126,7 @@ class TestDQNAgent:
         _, agent = model_and_agent
         agent.reset()
 
-        static = np.random.randn(35).astype(np.float32)
+        static = np.random.randn(37).astype(np.float32)
         dynamic = np.random.randn(11).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
@@ -138,7 +138,7 @@ class TestDQNAgent:
         _, agent = model_and_agent
         agent.reset()
 
-        static = np.random.randn(35).astype(np.float32)
+        static = np.random.randn(37).astype(np.float32)
         dynamic = np.random.randn(11).astype(np.float32)
         # Only allow actions 0 and 1
         mask = np.array([True, True, False, False, False, False, False, False, False])
@@ -152,7 +152,7 @@ class TestDQNAgent:
         _, agent = model_and_agent
         agent.reset()
 
-        static = np.random.randn(35).astype(np.float32)
+        static = np.random.randn(37).astype(np.float32)
         dynamic = np.random.randn(11).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
@@ -169,7 +169,7 @@ class TestDQNAgent:
         _, agent = model_and_agent
         agent.reset()
 
-        static = np.random.randn(35).astype(np.float32)
+        static = np.random.randn(37).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
         # Step through multiple timesteps with different dynamic features
@@ -186,7 +186,7 @@ class TestDQNAgent:
         _, agent = model_and_agent
         agent.reset()
 
-        static = np.random.randn(35).astype(np.float32)
+        static = np.random.randn(37).astype(np.float32)
         dynamic = np.random.randn(11).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
@@ -202,7 +202,7 @@ class TestDQNAgent:
         _, agent = model_and_agent
         agent.reset()
 
-        static = np.random.randn(35).astype(np.float32)
+        static = np.random.randn(37).astype(np.float32)
         dynamic = np.random.randn(11).astype(np.float32)
         mask = np.zeros(9, dtype=bool)
         mask[0] = True
