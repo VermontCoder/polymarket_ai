@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import random
 
 import torch
 
@@ -84,9 +85,11 @@ def main():
     if args.episode_ids is not None:
         selected = [selected[i] for i in args.episode_ids if i < len(selected)]
     elif args.num_episodes is not None:
-        selected = selected[:args.num_episodes]
+        rng = random.Random(args.seed)
+        selected = rng.sample(selected, min(args.num_episodes, len(selected)))
 
-    print(f"Running {len(selected)} episodes with {args.player} agent\n")
+    print(f"Running {len(selected)} episodes with {args.player} agent")
+    print(f"Seed: {args.seed}\n")
 
     # Set up normalizer (needed for both agents for consistency)
     normalizer = Normalizer()

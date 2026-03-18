@@ -190,9 +190,9 @@ An abstract base model interface allows swapping architectures:
 
 **Taker fee formula:**
 ```
-fee = 0.25 * price * (1 - price / 100)
+fee = 0.02 * price * (1 - price / 100)
 ```
-Where `price` is in cents. Peak fee: 1.5625c at 50c. Rounded to 4 decimal places, minimum 0.0001c.
+Where `price` is in cents. Peak fee: 0.5c at 50c. Rounded to 4 decimal places, minimum 0.0001c.
 
 **Maker rebate:** 20% of the taker fee that would have been charged at the trade price.
 

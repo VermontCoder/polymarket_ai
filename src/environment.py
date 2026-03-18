@@ -45,7 +45,7 @@ def taker_fee(price: float) -> float:
     Returns:
         Fee in cents, rounded to 4 decimal places.
     """
-    fee = 0.25 * price * (1.0 - price / 100.0)
+    fee = 0.02 * price * (1.0 - price / 100.0)
     fee = round(fee, 4)
     fee = max(fee, 0.0001)
     return fee

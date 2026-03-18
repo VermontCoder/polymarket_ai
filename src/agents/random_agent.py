@@ -17,11 +17,16 @@ class RandomAgent:
     def select_action(self, action_mask: np.ndarray) -> int:
         """Select a random valid action.
 
+        95% of the time does nothing (action 0). The remaining 5%
+        selects uniformly from the valid non-zero actions.
+
         Args:
             action_mask: Boolean array of shape (9,). True = allowed.
 
         Returns:
             Action index (0-8).
         """
-        valid_actions = np.where(action_mask)[0]
-        return int(np.random.choice(valid_actions))
+        valid_nonzero = np.where(action_mask[1:])[0] + 1
+        if len(valid_nonzero) == 0 or np.random.random() < 0.95:
+            return 0
+        return int(np.random.choice(valid_nonzero))

@@ -93,13 +93,25 @@ def run_visibility(
         env.reset(episode)
 
         # Episode header
-        timestamp = episode.get("timestamp", "N/A")
+        session_id = episode.get("session_id", "N/A")
         outcome = episode["outcome"]
-        start_price = episode.get("start_price", "N/A")
-        if isinstance(start_price, (int, float)):
-            start_price = f"${start_price:,.2f}"
+        start_price = episode.get("start_price")
+        end_price = episode.get("end_price")
+        hour = episode.get("hour")
+        day = episode.get("day")
+        diff_prev = episode.get("diff_pct_prev_session")
+        diff_hour = episode.get("diff_pct_hour")
 
-        print(f"\nEpisode: {timestamp} | Outcome: {outcome} | Price to beat: {start_price}")
+        start_str = f"${start_price:,.2f}" if isinstance(start_price, (int, float)) else "N/A"
+        end_str = f"${end_price:,.2f}" if isinstance(end_price, (int, float)) else "N/A"
+        diff_prev_str = f"{diff_prev:+.3f}%" if diff_prev is not None else "N/A"
+        diff_hour_str = f"{diff_hour:+.3f}%" if diff_hour is not None else "N/A"
+        day_names = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+        day_str = day_names.get(day, str(day)) if day is not None else "N/A"
+
+        print(f"\nEpisode: {session_id} | Outcome: {outcome}")
+        print(f"  Start: {start_str} | End: {end_str} | Hour: {hour} | Day: {day_str}")
+        print(f"  Prev session: {diff_prev_str} | Hour trend: {diff_hour_str}")
         print(f"Player: {player_name}")
         print("-" * 69)
 
@@ -148,12 +160,8 @@ def run_visibility(
             )
 
             if locked:
-                # Check limit order fill status
-                trade_info = env.trade_info
-                if trade_info and trade_info["is_maker"] and trade_info["filled"]:
-                    print("  [Limit order FILLED]")
-                else:
-                    print("  [Locked - no action]")
+                if not is_maker_trade:
+                    print("  [Taker order executed - waiting for outcome]")
             else:
                 # Format action display
                 if action == 0:
@@ -171,6 +179,14 @@ def run_visibility(
                     print("  >>> Agent locked in. Watching remaining rows...")
 
             done, reward = env.step(action)
+
+            # Show limit order fill status after step (fill check runs inside step)
+            if locked and is_maker_trade:
+                trade_info = env.trade_info
+                if trade_info and trade_info["filled"]:
+                    print("  [Limit order FILLED]")
+                else:
+                    print("  [Limit order pending...]")
 
             print("-" * 69)
 

@@ -91,18 +91,20 @@ class TestRandomAgent:
         action = agent.select_action(mask)
         assert 0 <= action <= 8
 
-    def test_uniform_distribution(self):
-        """With all actions valid, distribution is roughly uniform."""
+    def test_action_distribution(self):
+        """Action 0 is selected ~95% of the time, others share ~5%."""
         agent = RandomAgent()
         mask = np.ones(9, dtype=bool)
         counts = np.zeros(9)
-        n = 9000
+        n = 10000
         for _ in range(n):
             counts[agent.select_action(mask)] += 1
-        # Each action should be ~1000 +/- some tolerance
-        expected = n / 9
-        for c in counts:
-            assert abs(c - expected) < expected * 0.3
+        # Action 0 should be ~95%
+        assert counts[0] / n > 0.90
+        assert counts[0] / n < 0.99
+        # Non-zero actions should each get roughly 5%/8 ≈ 0.625%
+        for c in counts[1:]:
+            assert c > 0  # each action selected at least once in 10k trials
 
 
 # ---------------------------------------------------------------------------

@@ -71,24 +71,24 @@ class TestTakerFee:
     """Taker fee matches formula at various prices."""
 
     def test_fee_at_1c(self):
-        # fee = 0.25 * 1 * (1 - 1/100) = 0.25 * 0.99 = 0.2475
-        assert taker_fee(1) == pytest.approx(0.2475)
+        # fee = 0.02 * 1 * (1 - 1/100) = 0.02 * 0.99 = 0.0198
+        assert taker_fee(1) == pytest.approx(0.0198)
 
     def test_fee_at_25c(self):
-        # fee = 0.25 * 25 * (1 - 25/100) = 6.25 * 0.75 = 4.6875
-        assert taker_fee(25) == pytest.approx(4.6875)
+        # fee = 0.02 * 25 * (1 - 25/100) = 0.5 * 0.75 = 0.375
+        assert taker_fee(25) == pytest.approx(0.375)
 
     def test_fee_at_50c(self):
-        # fee = 0.25 * 50 * (1 - 50/100) = 12.5 * 0.5 = 6.25
-        assert taker_fee(50) == pytest.approx(6.25)
+        # fee = 0.02 * 50 * (1 - 50/100) = 1.0 * 0.5 = 0.5
+        assert taker_fee(50) == pytest.approx(0.5)
 
     def test_fee_at_75c(self):
-        # fee = 0.25 * 75 * (1 - 75/100) = 18.75 * 0.25 = 4.6875
-        assert taker_fee(75) == pytest.approx(4.6875)
+        # fee = 0.02 * 75 * (1 - 75/100) = 1.5 * 0.25 = 0.375
+        assert taker_fee(75) == pytest.approx(0.375)
 
     def test_fee_at_99c(self):
-        # fee = 0.25 * 99 * (1 - 99/100) = 24.75 * 0.01 = 0.2475
-        assert taker_fee(99) == pytest.approx(0.2475)
+        # fee = 0.02 * 99 * (1 - 99/100) = 1.98 * 0.01 = 0.0198
+        assert taker_fee(99) == pytest.approx(0.0198)
 
     def test_fee_peak_at_50c(self):
         """Peak fee is at 50c."""
@@ -103,8 +103,8 @@ class TestTakerFee:
     def test_fee_rounding(self):
         """Fee is rounded to 4 decimal places."""
         fee = taker_fee(33)
-        # 0.25 * 33 * (1 - 33/100) = 8.25 * 0.67 = 5.5275
-        assert fee == pytest.approx(5.5275)
+        # 0.02 * 33 * (1 - 33/100) = 0.66 * 0.67 = 0.4422
+        assert fee == pytest.approx(0.4422)
         # Ensure exactly 4 decimal places
         assert fee == round(fee, 4)
 
