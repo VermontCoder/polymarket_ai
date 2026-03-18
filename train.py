@@ -108,8 +108,31 @@ def train_single(
     return stats["best_val_profit"]
 
 
+def _config_key(config):
+    """Create a stable string key for a config dict (excludes 'epochs')."""
+    return (
+        f"lr={config['lr']}_ed={config['epsilon_decay']}"
+        f"_sl={config['seq_len']}_h={config['lstm_hidden']}"
+    )
+
+
+def _load_grid_results(path):
+    """Load existing grid search results from JSON file."""
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+
+def _save_grid_results(path, results):
+    """Save grid search results to JSON file."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(results, f, indent=2)
+
+
 def grid_search(train_eps, val_eps, test_eps, save_path):
-    """Run hyperparameter grid search per spec."""
+    """Run hyperparameter grid search per spec. Supports resume via JSON checkpoint."""
     param_grid = {
         "lr": [5e-5, 1e-4, 3e-4],
         "epsilon_decay": [150, 300],
@@ -118,15 +141,36 @@ def grid_search(train_eps, val_eps, test_eps, save_path):
     }
     seeds = [42, 123, 456]
 
+    results_path = "checkpoints/grid_results.json"
+    results = _load_grid_results(results_path)
+
     keys = list(param_grid.keys())
     values = list(param_grid.values())
+
+    all_combos = list(itertools.product(*values))
+    completed = len(results)
+    total = len(all_combos)
+    if completed > 0:
+        print(f"Resuming grid search: {completed}/{total} configs already done")
 
     best_median = -float("inf")
     best_config = None
 
-    for combo in itertools.product(*values):
+    # Restore best from previous results
+    for key, entry in results.items():
+        if entry["median_val_profit"] > best_median:
+            best_median = entry["median_val_profit"]
+            best_config = entry["config"]
+
+    for i, combo in enumerate(all_combos):
         config = dict(zip(keys, combo))
         config["epochs"] = 1
+        key = _config_key(config)
+
+        if key in results:
+            continue
+
+        print(f"\n[Config {i+1}/{total}] {config}")
 
         seed_profits = []
         for seed in seeds:
@@ -136,7 +180,7 @@ def grid_search(train_eps, val_eps, test_eps, save_path):
             )
             val_profit = train_single(
                 train_eps, val_eps, test_eps, config, seed,
-                save_path=f"checkpoints/grid_temp.pt",
+                save_path="checkpoints/grid_temp.pt",
                 log_dir=log_dir,
             )
             seed_profits.append(val_profit)
@@ -144,6 +188,14 @@ def grid_search(train_eps, val_eps, test_eps, save_path):
         median_profit = float(np.median(seed_profits))
         print(f"\nConfig: {config} | Median val profit: {median_profit:.2f}c")
         print(f"  Per-seed profits: {seed_profits}")
+
+        # Save after each config completes
+        results[key] = {
+            "config": {k: v for k, v in config.items() if k != "epochs"},
+            "seed_profits": seed_profits,
+            "median_val_profit": median_profit,
+        }
+        _save_grid_results(results_path, results)
 
         if median_profit > best_median:
             best_median = median_profit
