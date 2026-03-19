@@ -186,3 +186,28 @@ def test_grid_search_resumes_skips_completed(tmp_path):
 
     # The one already-completed config should NOT have been submitted
     assert key not in submitted_keys
+
+
+def test_run_config_worker_pushes_events_to_queue():
+    """When status_queue is provided, worker pushes seed_start and seed_done events."""
+    import queue
+    from train import run_config_worker, _config_key
+
+    eps = make_fake_episodes(60)
+    config = {"lr": 1e-4, "epsilon_decay": 150, "seq_len": 10, "lstm_hidden": 16, "epochs": 1}
+
+    # Use a plain queue.Queue — call worker in-process to avoid spawn overhead
+    q = queue.Queue()
+
+    key, seed_profits, median = run_config_worker(config, [42], eps, eps, eps, status_queue=q)
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+
+    event_types = [e["event"] for e in events]
+    assert "seed_start" in event_types
+    assert "seed_done" in event_types
+    # All events should carry the correct key
+    for e in events:
+        assert e["key"] == key

@@ -149,11 +149,16 @@ def run_config_worker(
     train_eps: list,
     val_eps: list,
     test_eps: list,
+    status_queue=None,
 ) -> tuple:
     """Worker function for parallel grid search.
 
     Runs all seeds for one config sequentially and returns results.
     Must be a top-level function for multiprocessing pickling on Windows.
+
+    When status_queue is provided:
+    - Redirects stdout to devnull (prevents raw prints corrupting Rich display)
+    - Pushes seed_start, val, seed_done events to the queue
 
     Args:
         config: Hyperparameter dict (including 'epochs').
@@ -161,39 +166,90 @@ def run_config_worker(
         train_eps: Training episodes.
         val_eps: Validation episodes.
         test_eps: Test episodes.
+        status_queue: Optional queue for pushing status events to the parent.
 
     Returns:
         Tuple of (config_key, seed_profits, median_val_profit).
     """
+    import sys
+    import os as _os
+
     key = _config_key(config)
     seed_profits = []
+    total_seeds = len(seeds)
 
-    for seed in seeds:
-        log_dir = (
-            f"runs/grid_lr{config['lr']}_ed{config['epsilon_decay']}"
-            f"_sl{config['seq_len']}_h{config['lstm_hidden']}_s{seed}"
-        )
-        # Unique temp path per worker to avoid file conflicts
-        temp_path = (
-            f"checkpoints/grid_temp_{key}_s{seed}.pt"
-        )
-        val_profit = train_single(
-            train_eps, val_eps, test_eps, config, seed,
-            save_path=temp_path,
-            log_dir=log_dir,
-        )
-        seed_profits.append(val_profit)
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+    # Suppress stdout in workers so the Rich display in the parent isn't corrupted.
+    # stderr is left alone so tracebacks remain visible.
+    _orig_stdout = sys.stdout
+    _devnull = None
+    if status_queue is not None:
+        _devnull = open(_os.devnull, "w")
+        sys.stdout = _devnull
+
+    try:
+        for seed_idx, seed in enumerate(seeds):
+            if status_queue is not None:
+                status_queue.put({
+                    "key": key,
+                    "event": "seed_start",
+                    "seed": seed,
+                    "total_seeds": total_seeds,
+                })
+
+            log_dir = (
+                f"runs/grid_lr{config['lr']}_ed{config['epsilon_decay']}"
+                f"_sl{config['seq_len']}_h{config['lstm_hidden']}_s{seed}"
+            )
+            temp_path = f"checkpoints/grid_temp_{key}_s{seed}.pt"
+
+            # Build on_validation callback if queue is present
+            on_validation = None
+            if status_queue is not None:
+                def _make_callback(q, k, s):
+                    def callback(episode, val_profit, epsilon):
+                        q.put({
+                            "key": k,
+                            "event": "val",
+                            "seed": s,
+                            "episode": episode,
+                            "val_profit": val_profit,
+                            "epsilon": epsilon,
+                        })
+                    return callback
+                on_validation = _make_callback(status_queue, key, seed)
+
+            val_profit = train_single(
+                train_eps, val_eps, test_eps, config, seed,
+                save_path=temp_path,
+                log_dir=log_dir,
+                on_validation=on_validation,
+            )
+            seed_profits.append(val_profit)
+
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+            if status_queue is not None:
+                status_queue.put({
+                    "key": key,
+                    "event": "seed_done",
+                    "seed": seed,
+                    "seeds_done": seed_idx + 1,
+                })
+
+    finally:
+        if _devnull is not None:
+            sys.stdout = _orig_stdout
+            _devnull.close()
 
     median_profit = float(np.median(seed_profits))
     return key, seed_profits, median_profit
 
 
 def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers=None):
-    """Run hyperparameter grid search. Configs run in parallel across CPU cores.
+    """Run hyperparameter grid search with parallel workers and Rich live display.
 
     Args:
         train_eps: Training episodes.
@@ -203,12 +259,16 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
         seeds: List of random seeds (default: [42, 123, 456]).
         num_workers: Number of parallel worker processes. Defaults to os.cpu_count().
     """
+    import multiprocessing
+    import threading
+    from src.grid_display import GridDisplay
+
     if seeds is None:
         seeds = [42, 123, 456]
 
     results = _load_grid_results(GRID_RESULTS_PATH)
 
-    keys = list(PARAM_GRID.keys())
+    keys_list = list(PARAM_GRID.keys())
     values = list(PARAM_GRID.values())
     all_combos = list(itertools.product(*values))
     total = len(all_combos)
@@ -216,15 +276,12 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
     # Build list of pending configs (skip already completed)
     pending = []
     for combo in all_combos:
-        config = dict(zip(keys, combo))
+        config = dict(zip(keys_list, combo))
         config["epochs"] = 1
         if _config_key(config) not in results:
             pending.append(config)
 
-    completed = total - len(pending)
-    if completed > 0:
-        print(f"Resuming grid search: {completed}/{total} configs already done")
-    print(f"Running {len(pending)} remaining configs on up to {num_workers or os.cpu_count()} workers")
+    completed_count = total - len(pending)
 
     # Restore best from previously completed results
     best_median = -float("inf")
@@ -234,33 +291,57 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
             best_median = entry["median_val_profit"]
             best_config = entry["config"]
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Submit all pending configs
-        future_to_config = {
-            executor.submit(
-                run_config_worker, config, seeds, train_eps, val_eps, test_eps
-            ): config
-            for config in pending
-        }
+    # IPC queue for worker -> parent status updates
+    manager = multiprocessing.Manager()
+    status_queue = manager.Queue()
+    stop_event = threading.Event()
 
-        # Collect results as they complete
-        for future in concurrent.futures.as_completed(future_to_config):
-            config = future_to_config[future]
-            key, seed_profits, median_profit = future.result()
+    try:
+        with GridDisplay(pending, total=total, completed=completed_count) as display:
+            # Polling thread reads queue and updates display
+            poll_thread = threading.Thread(
+                target=display.start_polling,
+                args=(status_queue, stop_event),
+                daemon=True,
+            )
+            poll_thread.start()
 
-            print(f"\nConfig done: {config} | Median val profit: {median_profit:.2f}c")
-            print(f"  Per-seed profits: {seed_profits}")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+                future_to_config = {
+                    executor.submit(
+                        run_config_worker,
+                        config, seeds, train_eps, val_eps, test_eps, status_queue,
+                    ): config
+                    for config in pending
+                }
 
-            results[key] = {
-                "config": {k: v for k, v in config.items() if k != "epochs"},
-                "seed_profits": seed_profits,
-                "median_val_profit": median_profit,
-            }
-            _save_grid_results(GRID_RESULTS_PATH, results)
+                for future in concurrent.futures.as_completed(future_to_config):
+                    config = future_to_config[future]
+                    key, seed_profits, median_profit = future.result()
 
-            if median_profit > best_median:
-                best_median = median_profit
-                best_config = config
+                    results[key] = {
+                        "config": {k: v for k, v in config.items() if k != "epochs"},
+                        "seed_profits": seed_profits,
+                        "median_val_profit": median_profit,
+                    }
+                    _save_grid_results(GRID_RESULTS_PATH, results)
+
+                    # Push config_done so display marks it complete
+                    status_queue.put({
+                        "key": key,
+                        "event": "config_done",
+                        "median": median_profit,
+                        "seed_profits": seed_profits,
+                    })
+
+                    if median_profit > best_median:
+                        best_median = median_profit
+                        best_config = config
+
+            stop_event.set()
+            poll_thread.join(timeout=2.0)
+    finally:
+        manager.shutdown()
 
     print(f"\n{'='*60}")
     print(f"Best config: {best_config}")
