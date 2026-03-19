@@ -117,7 +117,6 @@ def train_single(
     return stats["best_val_profit"]
 
 
-
 def _load_grid_results(path):
     """Load existing grid search results from JSON file."""
     if os.path.exists(path):

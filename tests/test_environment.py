@@ -908,13 +908,7 @@ class TestEpisodeInfo:
 # Tests: Integration with real data
 # ---------------------------------------------------------------------------
 
-def _find_data_file():
-    """Return the first JSON file found in the data/ directory."""
-    import glob
-    files = glob.glob("data/*.json")
-    if not files:
-        raise FileNotFoundError("No JSON files found in data/")
-    return files[0]
+from tests.conftest import find_data_file as _find_data_file
 
 
 class TestIntegrationWithRealData:

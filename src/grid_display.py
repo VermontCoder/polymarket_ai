@@ -1,7 +1,6 @@
 """Rich live display for parallel grid search progress."""
 
 import threading
-from typing import Optional
 
 from rich.live import Live
 from rich.table import Table
@@ -62,6 +61,7 @@ class GridDisplay:
         table.add_column("Seeds", justify="center")
         table.add_column("Episode", justify="right")
         table.add_column("Val Profit", justify="right")
+        table.add_column("Best Val", justify="right")
         table.add_column("Median", justify="right")
 
         for key, s in self._states.items():
@@ -76,6 +76,9 @@ class GridDisplay:
             val_text = (
                 f"{s['val_profit']:+.1f}c" if s["val_profit"] is not None else "—"
             )
+            best_val_text = (
+                self._profit_text(s["best_val"]) if s["best_val"] is not None else "—"
+            )
             median_text = (
                 self._profit_text(s["median"]) if s["median"] is not None else "—"
             )
@@ -88,6 +91,7 @@ class GridDisplay:
                 seeds_text,
                 episode_text,
                 val_text,
+                best_val_text,
                 median_text,
             )
 

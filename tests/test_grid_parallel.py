@@ -189,12 +189,18 @@ def test_grid_search_resumes_skips_completed(tmp_path):
 
 
 def test_run_config_worker_pushes_events_to_queue():
-    """When status_queue is provided, worker pushes seed_start and seed_done events."""
+    """When status_queue is provided, worker pushes seed_start, val, and seed_done events."""
     import queue
     from train import run_config_worker, _config_key
 
+    # Need enough episodes for validation to fire: val_every_episodes default is 50,
+    # so use 60 training eps. Pass val_every_episodes=50 explicitly via config to be
+    # sure the callback path is exercised regardless of DEFAULT_CONFIG changes.
     eps = make_fake_episodes(60)
-    config = {"lr": 1e-4, "epsilon_decay": 150, "seq_len": 10, "lstm_hidden": 16, "epochs": 1}
+    config = {
+        "lr": 1e-4, "epsilon_decay": 150, "seq_len": 10, "lstm_hidden": 16, "epochs": 1,
+        "val_every_episodes": 50,
+    }
 
     # Use a plain queue.Queue — call worker in-process to avoid spawn overhead
     q = queue.Queue()
@@ -206,8 +212,11 @@ def test_run_config_worker_pushes_events_to_queue():
         events.append(q.get_nowait())
 
     event_types = [e["event"] for e in events]
-    assert "seed_start" in event_types
-    assert "seed_done" in event_types
+    assert "seed_start" in event_types, f"Expected seed_start in {event_types}"
+    assert "seed_done" in event_types, f"Expected seed_done in {event_types}"
+    assert "val" in event_types, (
+        f"Expected val event (on_validation callback path) in {event_types}"
+    )
     # All events should carry the correct key
     for e in events:
         assert e["key"] == key
