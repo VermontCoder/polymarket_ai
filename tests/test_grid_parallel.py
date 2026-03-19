@@ -71,3 +71,23 @@ def test_run_config_worker_multiple_seeds():
     assert len(seed_profits) == 2
     import numpy as np
     assert median == float(np.median(seed_profits))
+
+
+def test_parse_args_num_workers_default():
+    """--num-workers defaults to None (meaning use cpu_count)."""
+    import sys
+    from unittest.mock import patch
+    with patch.object(sys, 'argv', ['train.py', '--data', 'x.json']):
+        from train import parse_args
+        args = parse_args()
+    assert args.num_workers is None
+
+
+def test_parse_args_num_workers_explicit():
+    """--num-workers can be set explicitly."""
+    import sys
+    from unittest.mock import patch
+    with patch.object(sys, 'argv', ['train.py', '--data', 'x.json', '--num-workers', '4']):
+        from train import parse_args
+        args = parse_args()
+    assert args.num_workers == 4

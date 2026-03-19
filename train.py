@@ -55,6 +55,11 @@ def parse_args():
         "--epsilon-decay", type=int, default=300,
         help="Episodes over which to decay epsilon",
     )
+    parser.add_argument(
+        "--num-workers", type=int, default=None,
+        help="Number of parallel worker processes for grid search. "
+             "Defaults to os.cpu_count().",
+    )
     return parser.parse_args()
 
 
