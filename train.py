@@ -1,13 +1,15 @@
 """Training entry point for Polymarket BTC 5-minute RL trading agent.
 
 Usage:
-    python train.py --data data/episodes.json
-    python train.py --data data/episodes.json --epochs 3 --lr 1e-4
-    python train.py --data data/episodes.json --grid-search
+    python train.py                        # uses first JSON in data/
+    python train.py --data data/foo.json   # explicit file
+    python train.py --epochs 3 --lr 1e-4
+    python train.py --grid-search
 """
 
 import argparse
 import concurrent.futures
+import glob
 import itertools
 import json
 import os
@@ -27,8 +29,8 @@ def parse_args():
         description="Train RL agent for Polymarket BTC 5-minute market"
     )
     parser.add_argument(
-        "--data", type=str, required=True,
-        help="Path to JSON episodes file",
+        "--data", type=str, default=None,
+        help="Path to JSON episodes file (default: first JSON found in data/)",
     )
     parser.add_argument("--epochs", type=int, default=1, help="Training epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -361,8 +363,15 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
 def main():
     args = parse_args()
 
-    print(f"Loading episodes from {args.data}...")
-    episodes = load_episodes(args.data)
+    data_path = args.data
+    if data_path is None:
+        files = glob.glob("data/*.json")
+        if not files:
+            raise FileNotFoundError("No JSON files found in data/ and --data not specified")
+        data_path = files[0]
+
+    print(f"Loading episodes from {data_path}...")
+    episodes = load_episodes(data_path)
     print(f"Loaded {len(episodes)} episodes")
 
     train_eps, val_eps, test_eps = split_episodes(episodes, seed=args.seed)
