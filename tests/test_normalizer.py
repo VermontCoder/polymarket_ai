@@ -434,16 +434,23 @@ class TestStdHelper:
 # Tests: integration with real data file (if available)
 # ---------------------------------------------------------------------------
 
+def _find_data_file():
+    """Return the first JSON file found in the data/ directory."""
+    import glob
+    files = glob.glob("data/*.json")
+    if not files:
+        raise FileNotFoundError("No JSON files found in data/")
+    return files[0]
+
+
 class TestIntegrationWithData:
     """Test normalizer against the actual data file."""
-
-    DATA_PATH = "/workspace/data/btc_polymarket_combined_20260318_162249.json"
 
     @pytest.fixture
     def real_data(self):
         import json
         try:
-            with open(self.DATA_PATH) as f:
+            with open(_find_data_file()) as f:
                 return json.load(f)
         except FileNotFoundError:
             pytest.skip("Data file not available")
