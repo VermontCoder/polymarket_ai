@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import itertools
 import json
 import os
@@ -136,6 +137,16 @@ def _save_grid_results(path, results):
         json.dump(results, f, indent=2)
 
 
+GRID_RESULTS_PATH = "checkpoints/grid_results.json"
+
+PARAM_GRID = {
+    "lr": [5e-5, 1e-4, 3e-4],
+    "epsilon_decay": [150, 300],
+    "seq_len": [10, 20, 40],
+    "lstm_hidden": [16, 32, 48],
+}
+
+
 def run_config_worker(
     config: dict,
     seeds: list,
@@ -185,86 +196,87 @@ def run_config_worker(
     return key, seed_profits, median_profit
 
 
-def grid_search(train_eps, val_eps, test_eps, save_path):
-    """Run hyperparameter grid search per spec. Supports resume via JSON checkpoint."""
-    param_grid = {
-        "lr": [5e-5, 1e-4, 3e-4],
-        "epsilon_decay": [150, 300],
-        "seq_len": [10, 20, 40],
-        "lstm_hidden": [16, 32, 48],
-    }
-    seeds = [42, 123, 456]
+def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers=None):
+    """Run hyperparameter grid search. Configs run in parallel across CPU cores.
 
-    results_path = "checkpoints/grid_results.json"
-    results = _load_grid_results(results_path)
+    Args:
+        train_eps: Training episodes.
+        val_eps: Validation episodes.
+        test_eps: Test episodes.
+        save_path: Where to save the final best model.
+        seeds: List of random seeds (default: [42, 123, 456]).
+        num_workers: Number of parallel worker processes. Defaults to os.cpu_count().
+    """
+    if seeds is None:
+        seeds = [42, 123, 456]
 
-    keys = list(param_grid.keys())
-    values = list(param_grid.values())
+    results = _load_grid_results(GRID_RESULTS_PATH)
 
+    keys = list(PARAM_GRID.keys())
+    values = list(PARAM_GRID.values())
     all_combos = list(itertools.product(*values))
-    completed = len(results)
     total = len(all_combos)
+
+    # Build list of pending configs (skip already completed)
+    pending = []
+    for combo in all_combos:
+        config = dict(zip(keys, combo))
+        config["epochs"] = 1
+        if _config_key(config) not in results:
+            pending.append(config)
+
+    completed = total - len(pending)
     if completed > 0:
         print(f"Resuming grid search: {completed}/{total} configs already done")
+    print(f"Running {len(pending)} remaining configs on up to {num_workers or os.cpu_count()} workers")
 
+    # Restore best from previously completed results
     best_median = -float("inf")
     best_config = None
-
-    # Restore best from previous results
-    for key, entry in results.items():
+    for entry in results.values():
         if entry["median_val_profit"] > best_median:
             best_median = entry["median_val_profit"]
             best_config = entry["config"]
 
-    for i, combo in enumerate(all_combos):
-        config = dict(zip(keys, combo))
-        config["epochs"] = 1
-        key = _config_key(config)
-
-        if key in results:
-            continue
-
-        print(f"\n[Config {i+1}/{total}] {config}")
-
-        seed_profits = []
-        for seed in seeds:
-            log_dir = (
-                f"runs/grid_lr{config['lr']}_ed{config['epsilon_decay']}"
-                f"_sl{config['seq_len']}_h{config['lstm_hidden']}_s{seed}"
-            )
-            val_profit = train_single(
-                train_eps, val_eps, test_eps, config, seed,
-                save_path="checkpoints/grid_temp.pt",
-                log_dir=log_dir,
-            )
-            seed_profits.append(val_profit)
-
-        median_profit = float(np.median(seed_profits))
-        print(f"\nConfig: {config} | Median val profit: {median_profit:.2f}c")
-        print(f"  Per-seed profits: {seed_profits}")
-
-        # Save after each config completes
-        results[key] = {
-            "config": {k: v for k, v in config.items() if k != "epochs"},
-            "seed_profits": seed_profits,
-            "median_val_profit": median_profit,
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # Submit all pending configs
+        future_to_config = {
+            executor.submit(
+                run_config_worker, config, seeds, train_eps, val_eps, test_eps
+            ): config
+            for config in pending
         }
-        _save_grid_results(results_path, results)
 
-        if median_profit > best_median:
-            best_median = median_profit
-            best_config = config
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_config):
+            config = future_to_config[future]
+            key, seed_profits, median_profit = future.result()
+
+            print(f"\nConfig done: {config} | Median val profit: {median_profit:.2f}c")
+            print(f"  Per-seed profits: {seed_profits}")
+
+            results[key] = {
+                "config": {k: v for k, v in config.items() if k != "epochs"},
+                "seed_profits": seed_profits,
+                "median_val_profit": median_profit,
+            }
+            _save_grid_results(GRID_RESULTS_PATH, results)
+
+            if median_profit > best_median:
+                best_median = median_profit
+                best_config = config
 
     print(f"\n{'='*60}")
     print(f"Best config: {best_config}")
     print(f"Best median val profit: {best_median:.2f}c")
+
+    if best_config is None:
+        print("No configs completed; skipping final retrain.")
+        return
+
     print(f"\nRetraining best config with seed 42...")
 
-    # Retrain best config for final model
-    train_single(
-        train_eps, val_eps, test_eps, best_config, seed=42,
-        save_path=save_path,
-    )
+    train_single(train_eps, val_eps, test_eps, best_config, seed=42, save_path=save_path)
 
 
 def main():
@@ -280,7 +292,7 @@ def main():
     )
 
     if args.grid_search:
-        grid_search(train_eps, val_eps, test_eps, args.save_path)
+        grid_search(train_eps, val_eps, test_eps, args.save_path, num_workers=args.num_workers)
     else:
         config = {
             "lr": args.lr,

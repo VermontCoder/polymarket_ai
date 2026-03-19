@@ -91,3 +91,98 @@ def test_parse_args_num_workers_explicit():
         from train import parse_args
         args = parse_args()
     assert args.num_workers == 4
+
+
+def test_grid_search_uses_multiple_workers(tmp_path):
+    """grid_search dispatches work to ProcessPoolExecutor with num_workers."""
+    import concurrent.futures
+    from unittest.mock import patch, MagicMock, call
+    from train import grid_search
+
+    eps = make_fake_episodes(30)
+
+    captured_max_workers = []
+
+    original_executor = concurrent.futures.ProcessPoolExecutor
+
+    class CapturingExecutor:
+        def __init__(self, max_workers=None):
+            captured_max_workers.append(max_workers)
+            self._inner = original_executor(max_workers=1)  # use 1 for test speed
+
+        def submit(self, fn, *args, **kwargs):
+            return self._inner.submit(fn, *args, **kwargs)
+
+        def __enter__(self):
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._inner.__exit__(*args)
+
+    results_path = str(tmp_path / "grid_results.json")
+    save_path = str(tmp_path / "model.pt")
+
+    with patch("train.GRID_RESULTS_PATH", results_path), \
+         patch("concurrent.futures.ProcessPoolExecutor", CapturingExecutor):
+        # Run with a tiny param grid — patch param_grid inside grid_search
+        tiny_grid = {
+            "lr": [1e-4],
+            "epsilon_decay": [150],
+            "seq_len": [10],
+            "lstm_hidden": [16],
+        }
+        with patch("train.PARAM_GRID", tiny_grid):
+            grid_search(eps, eps, eps, save_path, seeds=[42], num_workers=3)
+
+    assert captured_max_workers == [3]
+
+
+def test_grid_search_resumes_skips_completed(tmp_path):
+    """grid_search skips configs already present in grid_results.json."""
+    import json
+    import concurrent.futures
+    from unittest.mock import patch
+    from train import grid_search, _config_key, run_config_worker
+
+    eps = make_fake_episodes(30)
+    results_path = tmp_path / "grid_results.json"
+    save_path = str(tmp_path / "model.pt")
+
+    # Pre-populate results with one config
+    completed_config = {"lr": 1e-4, "epsilon_decay": 150, "seq_len": 10, "lstm_hidden": 16}
+    key = _config_key(completed_config)
+    existing = {
+        key: {
+            "config": completed_config,
+            "seed_profits": [100.0],
+            "median_val_profit": 100.0,
+        }
+    }
+    results_path.write_text(json.dumps(existing))
+
+    submitted_keys = []
+
+    def capturing_worker(config, seeds, *args):
+        submitted_keys.append(_config_key(config))
+        return run_config_worker(config, seeds, *args)
+
+    tiny_grid = {
+        "lr": [1e-4],
+        "epsilon_decay": [150],
+        "seq_len": [10],
+        "lstm_hidden": [16],
+    }
+
+    # IMPORTANT: Use ThreadPoolExecutor instead of ProcessPoolExecutor so that
+    # unittest.mock patches applied in the parent process are visible to
+    # workers. ProcessPoolExecutor spawns subprocesses on Windows (spawn start
+    # method), which import 'train' fresh — bypassing any in-process patches.
+    with patch("train.GRID_RESULTS_PATH", str(results_path)), \
+         patch("train.PARAM_GRID", tiny_grid), \
+         patch("train.run_config_worker", side_effect=capturing_worker), \
+         patch("concurrent.futures.ProcessPoolExecutor", concurrent.futures.ThreadPoolExecutor):
+        grid_search(eps, eps, eps, save_path, seeds=[42], num_workers=1)
+
+    # The one already-completed config should NOT have been submitted
+    assert key not in submitted_keys
