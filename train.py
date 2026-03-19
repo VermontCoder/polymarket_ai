@@ -131,6 +131,51 @@ def _save_grid_results(path, results):
         json.dump(results, f, indent=2)
 
 
+def run_config_worker(
+    config: dict,
+    seeds: list,
+    train_eps: list,
+    val_eps: list,
+    test_eps: list,
+) -> tuple:
+    """Worker function for parallel grid search.
+
+    Runs all seeds for one config sequentially and returns results.
+    Must be a top-level function for multiprocessing pickling on Windows.
+
+    Args:
+        config: Hyperparameter dict (including 'epochs').
+        seeds: List of random seeds to run.
+        train_eps: Training episodes.
+        val_eps: Validation episodes.
+        test_eps: Test episodes.
+
+    Returns:
+        Tuple of (config_key, seed_profits, median_val_profit).
+    """
+    key = _config_key(config)
+    seed_profits = []
+
+    for seed in seeds:
+        log_dir = (
+            f"runs/grid_lr{config['lr']}_ed{config['epsilon_decay']}"
+            f"_sl{config['seq_len']}_h{config['lstm_hidden']}_s{seed}"
+        )
+        # Unique temp path per worker to avoid file conflicts
+        temp_path = (
+            f"checkpoints/grid_temp_{key}_s{seed}.pt"
+        )
+        val_profit = train_single(
+            train_eps, val_eps, test_eps, config, seed,
+            save_path=temp_path,
+            log_dir=log_dir,
+        )
+        seed_profits.append(val_profit)
+
+    median_profit = float(np.median(seed_profits))
+    return key, seed_profits, median_profit
+
+
 def grid_search(train_eps, val_eps, test_eps, save_path):
     """Run hyperparameter grid search per spec. Supports resume via JSON checkpoint."""
     param_grid = {
