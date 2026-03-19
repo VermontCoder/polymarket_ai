@@ -2,3 +2,4 @@ torch
 tensorboard
 pytest
 numpy
+rich
