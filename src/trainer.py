@@ -59,9 +59,11 @@ class Trainer:
         normalizer: Normalizer,
         config: Optional[dict] = None,
         device: Optional[torch.device] = None,
+        on_validation: Optional[callable] = None,
     ) -> None:
         self.device = device or torch.device("cpu")
         self.config = {**self.DEFAULT_CONFIG, **(config or {})}
+        self._on_validation = on_validation
 
         # Online and target networks
         self.online_net = model.to(self.device)
@@ -550,6 +552,8 @@ class Trainer:
             f"Best: {self._best_val_profit:.2f}c | "
             f"Epsilon: {self.epsilon:.3f}"
         )
+        if self._on_validation is not None:
+            self._on_validation(self._episode_count, val_profit, self.epsilon)
 
     # ------------------------------------------------------------------
     # Utilities

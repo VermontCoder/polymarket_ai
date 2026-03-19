@@ -67,6 +67,7 @@ def parse_args():
 
 def train_single(
     train_eps, val_eps, test_eps, config, seed, save_path, log_dir=None,
+    on_validation=None,
 ):
     """Train a single configuration and return validation profit."""
     torch.manual_seed(seed)
@@ -91,6 +92,7 @@ def train_single(
             "epsilon_decay_episodes": config.get("epsilon_decay", 300),
         },
         device=device,
+        on_validation=on_validation,
     )
 
     stats = trainer.train(
