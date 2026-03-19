@@ -126,13 +126,22 @@ class TestStaleRowGapHandling:
         assert result[1]["rows"][0]["time_to_close"] == 299000
 
 
+def _find_data_file():
+    """Return the first JSON file found in the data/ directory."""
+    import glob
+    files = glob.glob("data/*.json")
+    if not files:
+        raise FileNotFoundError("No JSON files found in data/")
+    return files[0]
+
+
 class TestStaleRowRegression:
     """Regression test: no episode should start with a row from the previous session."""
 
     def test_no_episode_starts_with_stale_row(self):
         """After reassignment, no episode has row 0 with time_to_close < 5s."""
         from src.data_loader import load_episodes
-        eps = load_episodes("data/btc_polymarket_combined_20260318_162249.json")
+        eps = load_episodes(_find_data_file())
         for i, ep in enumerate(eps):
             ttc = ep["rows"][0].get("time_to_close")
             assert ttc is None or ttc >= 5000, (
@@ -143,10 +152,11 @@ class TestStaleRowRegression:
     def test_no_data_lost(self):
         """Total row count is preserved — stale rows are moved, not dropped."""
         import json
-        with open("data/btc_polymarket_combined_20260318_162249.json") as f:
+        path = _find_data_file()
+        with open(path) as f:
             raw = json.load(f)
         from src.data_loader import load_episodes
-        eps = load_episodes("data/btc_polymarket_combined_20260318_162249.json")
+        eps = load_episodes(path)
 
         raw_total = sum(len(ep["rows"]) for ep in raw)
         fixed_total = sum(len(ep["rows"]) for ep in eps)
