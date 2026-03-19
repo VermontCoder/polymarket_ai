@@ -69,3 +69,5 @@ def test_run_config_worker_multiple_seeds():
     key, seed_profits, median = run_config_worker(config, seeds, eps, eps, eps)
 
     assert len(seed_profits) == 2
+    import numpy as np
+    assert median == float(np.median(seed_profits))

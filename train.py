@@ -171,6 +171,10 @@ def run_config_worker(
             log_dir=log_dir,
         )
         seed_profits.append(val_profit)
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
     median_profit = float(np.median(seed_profits))
     return key, seed_profits, median_profit
