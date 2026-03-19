@@ -132,13 +132,16 @@ def _save_grid_results(path, results):
         json.dump(results, f, indent=2)
 
 
-GRID_RESULTS_PATH = "checkpoints/grid_results.json"
+GRID_RESULTS_PATH = "checkpoints/grid_results_p2.json"
 
+# Phase 2 grid: focused on productive region found in Phase 1.
+# Dropped: lr=5e-5 (consistently weak), seq_len=40 (no signal), h=16/32 (collapse/underfit).
+# Expanded: lstm_hidden up to 128 (h=48 was the floor, not the ceiling).
 PARAM_GRID = {
-    "lr": [5e-5, 1e-4, 3e-4],
+    "lr": [1e-4, 2e-4, 3e-4],
     "epsilon_decay": [150, 300],
-    "seq_len": [10, 20, 40],
-    "lstm_hidden": [16, 32, 48],
+    "seq_len": [10, 20],
+    "lstm_hidden": [48, 64, 96, 128],
 }
 
 
@@ -263,7 +266,7 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
     from src.grid_display import GridDisplay
 
     if seeds is None:
-        seeds = [42, 123, 456]
+        seeds = [42, 123, 456, 789, 999]
 
     results = _load_grid_results(GRID_RESULTS_PATH)
 
@@ -276,7 +279,7 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
     pending = []
     for combo in all_combos:
         config = dict(zip(keys_list, combo))
-        config["epochs"] = 1
+        config["epochs"] = 3
         if _config_key(config) not in results:
             pending.append(config)
 
