@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from src.data_loader import load_episodes, split_episodes
+from src.grid_utils import config_key as _config_key
 from src.models.lstm_dqn import LSTMDQN
 from src.normalizer import Normalizer
 from src.trainer import Trainer
@@ -113,13 +114,6 @@ def train_single(
     trainer.close()
     return stats["best_val_profit"]
 
-
-def _config_key(config):
-    """Create a stable string key for a config dict (excludes 'epochs')."""
-    return (
-        f"lr={config['lr']}_ed={config['epsilon_decay']}"
-        f"_sl={config['seq_len']}_h={config['lstm_hidden']}"
-    )
 
 
 def _load_grid_results(path):
