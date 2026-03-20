@@ -1,8 +1,8 @@
 """Episode simulation environment for Polymarket BTC 5-minute RL trading agent.
 
 Simulates episodes of the BTC 5-minute prediction market. Each episode has
-60-150 rows (2-second intervals). The agent can make at most ONE trade per
-episode.
+60-150 rows (2-second intervals). The agent can make multiple trades per
+episode (one per decision point), with a max of one pending limit order at a time.
 
 9 Actions:
   0: Do nothing
@@ -156,6 +156,10 @@ def compute_action_mask(
             mask[7] = False
 
     else:
+        # Sell mode: shares_owned > 0 — must have a valid direction
+        assert share_direction in ("UP", "DOWN"), (
+            f"share_direction must be 'UP' or 'DOWN' when shares_owned > 0, got {share_direction!r}"
+        )
         # Sell mode: mask all buys
         mask[1] = mask[3] = mask[5] = mask[7] = False
 

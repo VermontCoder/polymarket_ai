@@ -289,6 +289,12 @@ class TestActionMask:
         pending = {"action": 5, "price": 55.0, "market": "UP", "order_type": "buy", "placed_at_step": 0}
         assert compute_action_mask(row, shares_owned=0.0, pending_limit=pending)[0] is np.True_
 
+    def test_sell_mode_missing_direction_raises(self):
+        """Sell mode with no direction raises AssertionError."""
+        row = _make_row()
+        with pytest.raises(AssertionError):
+            compute_action_mask(row, shares_owned=4.99)  # share_direction defaults to ""
+
 
 # ---------------------------------------------------------------------------
 # Tests: Reward Computation (all 8 trade/outcome combinations)
