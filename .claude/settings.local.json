@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -m pip install tensorboard)",
+      "Bash(python -m pytest tests/test_grid_parallel.py::test_parse_args_num_workers_default tests/test_grid_parallel.py::test_parse_args_num_workers_explicit -v)"
+    ]
+  }
+}
