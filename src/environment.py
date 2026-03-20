@@ -63,6 +63,46 @@ def maker_rebate(price: float) -> float:
     return round(0.2 * taker_fee(price), 4)
 
 
+SHARES_PER_BUY: float = 5.0
+REWARD_NORMALIZATION: float = 500.0
+
+
+def compute_buy_shares(price: float, is_maker: bool) -> float:
+    """Compute effective shares received when buying SHARES_PER_BUY nominal shares.
+
+    Fee (taker) or rebate (maker) is absorbed into the share count rather than
+    tracked as a separate cash outflow. Cash outflow is always SHARES_PER_BUY * price.
+
+    Args:
+        price: Trade price in cents (1-99).
+        is_maker: True if this is a maker/limit order.
+
+    Returns:
+        Effective shares, rounded to 2 decimal places.
+    """
+    if is_maker:
+        return round(SHARES_PER_BUY * (1.0 + maker_rebate(price) / price), 2)
+    return round(SHARES_PER_BUY * (1.0 - taker_fee(price) / price), 2)
+
+
+def compute_sell_proceeds(shares: float, price: float, is_maker: bool) -> float:
+    """Compute cash received from selling `shares` at `price`.
+
+    Args:
+        shares: Number of shares to sell.
+        price: Trade price in cents.
+        is_maker: True if this is a maker/limit order.
+
+    Returns:
+        Cash received in cents, rounded to 4 decimal places.
+    """
+    if is_maker:
+        net_price = price + maker_rebate(price)
+    else:
+        net_price = price - taker_fee(price)
+    return round(shares * net_price, 4)
+
+
 # ---------------------------------------------------------------------------
 # Action mask
 # ---------------------------------------------------------------------------
@@ -393,6 +433,37 @@ class Environment:
             market_price = row.get(field)
             if market_price is not None and market_price >= price:
                 self._limit_filled = True
+
+    def skip_to_end(self) -> float:
+        """Skip remaining rows and return the final reward.
+
+        Call immediately after a non-zero action has been taken to avoid
+        running the model on rows where it can only choose "do nothing".
+
+        For taker actions: O(1) — reward is fully determined by the already-
+        recorded trade price and the episode outcome.
+        For maker/limit actions: scans remaining rows for a fill check (no
+        model inference needed), then computes the final reward.
+
+        Returns:
+            Final episode reward (same value as stepping through all rows).
+        """
+        assert self._has_acted, "skip_to_end() requires has_acted=True"
+
+        if self._is_maker:
+            # Scan remaining rows for limit-fill checks only.
+            # Once filled, reward is fully determined — no need to continue.
+            while self._current_step < len(self._rows):
+                self._check_limit_fill(self._rows[self._current_step])
+                self._current_step += 1
+                if self._limit_filled:
+                    self._current_step = len(self._rows)
+                    break
+        else:
+            # Taker: reward is deterministic immediately, no scan needed
+            self._current_step = len(self._rows)
+
+        return self._compute_final_reward()
 
     def _compute_final_reward(self) -> float:
         """Compute reward at episode end."""

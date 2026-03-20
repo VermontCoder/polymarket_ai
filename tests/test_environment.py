@@ -10,6 +10,10 @@ from src.environment import (
     maker_rebate,
     taker_fee,
     NUM_ACTIONS,
+    compute_buy_shares,
+    compute_sell_proceeds,
+    SHARES_PER_BUY,
+    REWARD_NORMALIZATION,
 )
 
 
@@ -905,6 +909,150 @@ class TestEpisodeInfo:
 
 
 # ---------------------------------------------------------------------------
+# Tests: skip_to_end() early termination
+# ---------------------------------------------------------------------------
+
+class TestSkipToEnd:
+    """Environment.skip_to_end() fast-forwards remaining rows and returns final reward."""
+
+    def test_taker_buy_up_win_returns_correct_reward(self):
+        """After buying UP, outcome UP: skip_to_end returns the correct positive reward."""
+        rows = [_make_row(up_ask=56.0) for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(1)  # buy UP taker at row 0
+
+        reward = env.skip_to_end()
+
+        expected = compute_reward(1, 56.0, "UP", is_maker=False, filled=True)
+        assert reward == pytest.approx(expected)
+
+    def test_taker_buy_up_loss_returns_negative_reward(self):
+        """After buying UP, outcome DOWN: skip_to_end returns a negative reward."""
+        rows = [_make_row(up_ask=56.0) for _ in range(5)]
+        ep = _make_episode(outcome="DOWN", rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(1)  # buy UP taker
+
+        reward = env.skip_to_end()
+
+        expected = compute_reward(1, 56.0, "DOWN", is_maker=False, filled=True)
+        assert reward == pytest.approx(expected)
+        assert reward < 0
+
+    def test_taker_skip_advances_current_step_to_end(self):
+        """After skip_to_end(), current_step equals num_rows."""
+        rows = [_make_row() for _ in range(10)]
+        ep = _make_episode(rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(1)  # act at row 0
+
+        env.skip_to_end()
+
+        assert env.current_step == env.num_rows
+
+    def test_limit_fills_on_later_row_returns_filled_reward(self):
+        """Limit buy UP fills when future ask drops to order price."""
+        # Row 0: up_ask=56 -> limit placed at 55
+        # Row 1: up_ask=55 -> fills (ask <= 55)
+        rows = [
+            _make_row(up_ask=56.0, up_bid=54.0),
+            _make_row(up_ask=55.0, up_bid=53.0),  # fill row
+            _make_row(up_ask=55.0, up_bid=53.0),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(5)  # limit buy UP at ask-1=55
+
+        reward = env.skip_to_end()
+
+        expected = compute_reward(5, 55.0, "UP", is_maker=True, filled=True)
+        assert reward == pytest.approx(expected)
+
+    def test_limit_no_fill_returns_zero(self):
+        """Limit buy UP with no fill row returns reward=0."""
+        rows = [_make_row(up_ask=60.0) for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(5)  # limit buy UP at 59; ask stays at 60 -> never fills
+
+        reward = env.skip_to_end()
+
+        assert reward == 0.0
+
+    def test_skip_to_end_requires_has_acted(self):
+        """skip_to_end() raises AssertionError if called before any action."""
+        ep = _make_episode()
+        env = Environment()
+        env.reset(ep)
+
+        with pytest.raises(AssertionError):
+            env.skip_to_end()
+
+    def test_skip_to_end_matches_full_step_through_reward(self):
+        """skip_to_end() produces the same reward as stepping through all rows."""
+        rows = [_make_row(up_ask=60.0) for _ in range(20)]
+        ep = _make_episode(outcome="UP", rows=rows)
+
+        # Approach 1: skip_to_end after acting at row 0
+        env1 = Environment()
+        env1.reset(ep)
+        env1.step(1)  # buy UP taker
+        reward_skip = env1.skip_to_end()
+
+        # Approach 2: manually step through all rows
+        env2 = Environment()
+        env2.reset(ep)
+        acted = False
+        reward_step = None
+        for _ in range(env2.num_rows):
+            action = 1 if not acted else 0
+            done, r = env2.step(action)
+            if not acted and action == 1:
+                acted = True
+            if done:
+                reward_step = r
+                break
+
+        assert reward_skip == pytest.approx(reward_step)
+
+    def test_limit_skip_matches_full_step_through_reward(self):
+        """skip_to_end() for a limit order matches stepping through all rows."""
+        rows = [
+            _make_row(up_ask=56.0, up_bid=54.0),
+            _make_row(up_ask=56.0, up_bid=54.0),  # no fill
+            _make_row(up_ask=55.0, up_bid=53.0),  # fills
+            _make_row(up_ask=54.0, up_bid=52.0),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+
+        env1 = Environment()
+        env1.reset(ep)
+        env1.step(5)  # limit buy UP at 55
+        reward_skip = env1.skip_to_end()
+
+        env2 = Environment()
+        env2.reset(ep)
+        acted = False
+        reward_step = None
+        for _ in range(env2.num_rows):
+            action = 5 if not acted else 0
+            done, r = env2.step(action)
+            if not acted and action == 5:
+                acted = True
+            if done:
+                reward_step = r
+                break
+
+        assert reward_skip == pytest.approx(reward_step)
+
+
+# ---------------------------------------------------------------------------
 # Tests: Integration with real data
 # ---------------------------------------------------------------------------
 
@@ -976,3 +1124,67 @@ class TestIntegrationWithRealData:
                 done, _ = env.step(0)
                 if done:
                     break
+
+
+# ---------------------------------------------------------------------------
+# Tests: Share Calculations
+# ---------------------------------------------------------------------------
+
+class TestShareCalculations:
+    """compute_buy_shares and compute_sell_proceeds match design spec."""
+
+    def test_taker_buy_shares_reduces_by_fee(self):
+        """Taker buy: shares = round(5 * (1 - fee/price), 2)."""
+        price = 50.0
+        expected = round(SHARES_PER_BUY * (1 - taker_fee(price) / price), 2)
+        assert compute_buy_shares(price, is_maker=False) == pytest.approx(expected)
+
+    def test_maker_buy_shares_increases_by_rebate(self):
+        """Maker buy: shares = round(5 * (1 + rebate/price), 2)."""
+        price = 50.0
+        expected = round(SHARES_PER_BUY * (1 + maker_rebate(price) / price), 2)
+        assert compute_buy_shares(price, is_maker=True) == pytest.approx(expected)
+
+    def test_taker_buy_shares_less_than_or_equal_five(self):
+        """Taker buy yields <= 5.0 shares (fee is positive, but rounds to 5.0 at extremes)."""
+        for price in [1.0, 25.0, 50.0, 75.0, 99.0]:
+            assert compute_buy_shares(price, is_maker=False) <= 5.0
+
+    def test_maker_buy_shares_greater_than_or_equal_five(self):
+        """Maker buy yields >= 5.0 shares (rebate is positive, but rounds to 5.0 at extremes)."""
+        for price in [1.0, 25.0, 50.0, 75.0, 99.0]:
+            assert compute_buy_shares(price, is_maker=True) >= 5.0
+
+    def test_shares_precision_two_decimal_places(self):
+        """Share counts are rounded to 2 decimal places."""
+        shares = compute_buy_shares(33.0, is_maker=False)
+        assert shares == round(shares, 2)
+
+    def test_taker_sell_proceeds(self):
+        """Taker sell: proceeds = shares * (price - taker_fee(price))."""
+        shares, price = 4.99, 55.0
+        expected = round(shares * (price - taker_fee(price)), 4)
+        assert compute_sell_proceeds(shares, price, is_maker=False) == pytest.approx(expected)
+
+    def test_maker_sell_proceeds(self):
+        """Maker sell: proceeds = shares * (price + maker_rebate(price))."""
+        shares, price = 5.01, 56.0
+        expected = round(shares * (price + maker_rebate(price)), 4)
+        assert compute_sell_proceeds(shares, price, is_maker=True) == pytest.approx(expected)
+
+    def test_taker_sell_proceeds_less_than_gross(self):
+        """Taker sell proceeds < shares * price (fee reduces payout)."""
+        shares, price = 4.99, 55.0
+        gross = shares * price
+        assert compute_sell_proceeds(shares, price, is_maker=False) < gross
+
+    def test_maker_sell_proceeds_more_than_gross(self):
+        """Maker sell proceeds > shares * price (rebate boosts payout)."""
+        shares, price = 5.01, 55.0
+        gross = shares * price
+        assert compute_sell_proceeds(shares, price, is_maker=True) > gross
+
+    def test_constants_exist(self):
+        """SHARES_PER_BUY and REWARD_NORMALIZATION are defined."""
+        assert SHARES_PER_BUY == 5.0
+        assert REWARD_NORMALIZATION == 500.0
