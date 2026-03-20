@@ -186,77 +186,26 @@ def compute_action_mask(
 
 
 # ---------------------------------------------------------------------------
-# Reward computation
-# ---------------------------------------------------------------------------
-
-def compute_reward(
-    action: int,
-    trade_price: float,
-    outcome: str,
-    is_maker: bool,
-    filled: bool,
-) -> float:
-    """Compute the normalized reward for a completed trade.
-
-    Args:
-        action: The action taken (1-8). Must not be 0.
-        trade_price: The price at which the trade executed (in cents).
-        outcome: Episode outcome, "UP" or "DOWN".
-        is_maker: True if this was a maker/limit order.
-        filled: True if a limit order was filled (always True for taker).
-
-    Returns:
-        Reward normalized to roughly [-1, 1] range (divided by 100).
-    """
-    if action == 0:
-        raise ValueError("compute_reward() must not be called with action=0")
-    if not filled:
-        return 0.0
-
-    # Determine if this is a buy or sell, and the market direction
-    is_buy = action in (1, 3, 5, 7)
-    is_up_market = action in (1, 2, 5, 6)  # UP market actions
-    share_direction = "UP" if is_up_market else "DOWN"
-
-    if is_buy:
-        # Cost = price + taker_fee (taker) or price - maker_rebate (maker)
-        if is_maker:
-            cost = trade_price - maker_rebate(trade_price)
-        else:
-            cost = trade_price + taker_fee(trade_price)
-
-        # Payout = 100c if outcome matches share direction, else 0
-        payout = 100.0 if outcome == share_direction else 0.0
-        reward_cents = payout - cost
-    else:
-        # Sell: received = price - taker_fee (taker) or price + maker_rebate (maker)
-        if is_maker:
-            received = trade_price + maker_rebate(trade_price)
-        else:
-            received = trade_price - taker_fee(trade_price)
-
-        # Payout owed = 100c if outcome matches share direction
-        payout_owed = 100.0 if outcome == share_direction else 0.0
-        reward_cents = received - payout_owed
-
-    return reward_cents / 100.0
-
-
-# ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
 
 class Environment:
-    """Episode simulation environment.
+    """Multi-trade episode simulation environment.
 
-    Simulates one episode at a time. The agent steps through rows and
-    can make at most one trade per episode.
+    The agent alternates between buy mode (shares_owned == 0) and sell
+    mode (shares_owned > 0). One trade is allowed per row.
+
+    State:
+        shares_owned:    Float shares currently held (0.0 = buy mode).
+        share_direction: "UP" or "DOWN" — the direction of held shares.
+        net_cash:        Intra-episode cash flow (sells_in - buys_out) in cents.
+        pending_limit:   Dict describing a pending maker order, or None.
 
     Usage:
         env = Environment()
         env.reset(episode_dict)
         while True:
-            obs = env.get_observation()
+            obs  = env.get_observation()
             mask = env.get_action_mask()
             done, reward = env.step(action)
             if done:
@@ -267,58 +216,43 @@ class Environment:
         self._episode: dict[str, Any] | None = None
         self._rows: list[dict[str, Any]] = []
         self._current_step: int = 0
-        self._has_acted: bool = False
         self._outcome: str = ""
 
-        # Trade state
-        self._trade_action: int | None = None
-        self._trade_price: float | None = None
-        self._is_maker: bool = False
-        self._limit_filled: bool = False
-        self._limit_market: str = ""  # "UP" or "DOWN" for limit orders
-        self._action_step: int = 0
+        # Share / cash state
+        self._shares_owned: float = 0.0
+        self._share_direction: str = ""   # "UP" or "DOWN"
+        self._net_cash: float = 0.0       # cents; positive = net received
+        self._pending_limit: dict[str, Any] | None = None
+        self._trades: list[dict[str, Any]] = []
 
     def reset(self, episode: dict[str, Any]) -> None:
-        """Initialize the environment with an episode dict.
-
-        Args:
-            episode: Episode dict with keys: outcome, rows, hour, day, etc.
-        """
+        """Initialize the environment with an episode dict."""
         self._episode = episode
         self._rows = episode["rows"]
         self._current_step = 0
-        self._has_acted = False
         self._outcome = episode["outcome"]
-
-        # Reset trade state
-        self._trade_action = None
-        self._trade_price = None
-        self._is_maker = False
-        self._limit_filled = False
-        self._limit_market = ""
-        self._action_step = 0
+        self._shares_owned = 0.0
+        self._share_direction = ""
+        self._net_cash = 0.0
+        self._pending_limit = None
+        self._trades = []
 
     def get_observation(self) -> dict[str, Any]:
-        """Return current row's data with forbidden fields stripped.
-
-        Returns a copy of the current row dict without forbidden fields.
-        Does NOT include episode-level forbidden fields either.
-        """
+        """Return current row data (forbidden fields stripped) plus is_sell_mode."""
         row = self._rows[self._current_step]
         obs = {k: v for k, v in row.items() if k not in FORBIDDEN_FIELDS}
+        obs["is_sell_mode"] = 1.0 if self._shares_owned > 0 else 0.0
         return obs
 
     def get_action_mask(self) -> np.ndarray:
         """Return boolean mask for valid actions at current step."""
         row = self._rows[self._current_step]
-        return compute_action_mask(row, self._has_acted)
+        return compute_action_mask(
+            row, self._shares_owned, self._share_direction, self._pending_limit
+        )
 
     def get_episode_info(self) -> dict[str, Any]:
-        """Return episode-level info (non-forbidden fields) for the agent.
-
-        This provides static features like hour, day, diff_pct_prev_session,
-        diff_pct_hour.
-        """
+        """Return episode-level info (non-forbidden fields) for the agent."""
         assert self._episode is not None
         return {
             k: v for k, v in self._episode.items()
@@ -326,8 +260,8 @@ class Environment:
         }
 
     @property
-    def has_acted(self) -> bool:
-        return self._has_acted
+    def shares_owned(self) -> float:
+        return self._shares_owned
 
     @property
     def current_step(self) -> int:
@@ -338,16 +272,9 @@ class Environment:
         return len(self._rows)
 
     @property
-    def trade_info(self) -> dict[str, Any] | None:
-        """Return trade details if a trade has been made, else None."""
-        if self._trade_action is None:
-            return None
-        return {
-            "action": self._trade_action,
-            "price": self._trade_price,
-            "is_maker": self._is_maker,
-            "filled": self._limit_filled if self._is_maker else True,
-        }
+    def trades(self) -> list[dict[str, Any]]:
+        """Completed trades this episode (not including pending limit)."""
+        return list(self._trades)
 
     def step(self, action: int) -> tuple[bool, float]:
         """Process one timestep.
@@ -356,139 +283,132 @@ class Environment:
             action: Integer 0-8.
 
         Returns:
-            Tuple of (done, reward).
-            reward is only meaningful when done=True.
+            Tuple of (done, reward). reward is only meaningful when done=True.
         """
         assert 0 <= action < NUM_ACTIONS, f"Invalid action: {action}"
 
-        # Validate action against mask
         mask = self.get_action_mask()
         assert mask[action], (
-            f"Action {action} is masked at step {self._current_step}"
+            f"Action {action} is masked at step {self._current_step} "
+            f"(shares={self._shares_owned:.2f}, dir={self._share_direction!r}, "
+            f"pending={self._pending_limit is not None})"
         )
 
         row = self._rows[self._current_step]
 
-        if action != 0 and not self._has_acted:
-            self._has_acted = True
-            self._trade_action = action
+        if action != 0:
             self._execute_action(action, row)
 
-        # For pending limit orders, check fill on current row
-        # (this also checks on the row where the order was placed,
-        #  but only AFTER the order is placed, and fill logic checks
-        #  future rows. We check on subsequent steps.)
-        if self._is_maker and not self._limit_filled and self._has_acted:
-            # Only check fill on rows AFTER the action was taken
-            if self._current_step > self._action_step:
-                self._check_limit_fill(row)
+        # Check pending limit fill on rows AFTER the order was placed
+        if (
+            self._pending_limit is not None
+            and self._current_step > self._pending_limit["placed_at_step"]
+        ):
+            self._check_limit_fill(row)
 
-        # Advance step
         self._current_step += 1
-
-        # Check if episode is done
         done = self._current_step >= len(self._rows)
 
         if done:
-            reward = self._compute_final_reward()
-            return True, reward
-
+            return True, self._compute_final_reward()
         return False, 0.0
 
     def _execute_action(self, action: int, row: dict[str, Any]) -> None:
-        """Record trade details for the selected action."""
-        self._action_step = self._current_step
+        """Execute a trade action, updating shares and net_cash."""
+        if action in (1, 3):
+            # Taker buy
+            price = row["up_ask"] if action == 1 else row["down_ask"]
+            direction = "UP" if action == 1 else "DOWN"
+            shares = compute_buy_shares(price, is_maker=False)
+            self._shares_owned = shares
+            self._share_direction = direction
+            self._net_cash -= SHARES_PER_BUY * price
+            self._trades.append({
+                "type": "buy", "action": action, "price": price,
+                "shares": shares, "is_maker": False, "direction": direction,
+            })
 
-        if action in (1, 2, 3, 4):
-            # Taker actions
-            self._is_maker = False
-            if action == 1:
-                self._trade_price = row["up_ask"]
-            elif action == 2:
-                self._trade_price = row["up_bid"]
-            elif action == 3:
-                self._trade_price = row["down_ask"]
-            elif action == 4:
-                self._trade_price = row["down_bid"]
+        elif action in (2, 4):
+            # Taker sell
+            price = row["up_bid"] if action == 2 else row["down_bid"]
+            proceeds = compute_sell_proceeds(self._shares_owned, price, is_maker=False)
+            self._trades.append({
+                "type": "sell", "action": action, "price": price,
+                "shares": self._shares_owned, "proceeds": proceeds,
+                "is_maker": False, "direction": self._share_direction,
+            })
+            self._net_cash += proceeds
+            self._shares_owned = 0.0
+            self._share_direction = ""
 
-        elif action in (5, 6, 7, 8):
-            # Maker/limit actions
-            self._is_maker = True
-            self._limit_filled = False
-            if action == 5:
-                self._trade_price = row["up_ask"] - 1
-                self._limit_market = "UP"
-            elif action == 6:
-                self._trade_price = row["up_bid"] + 1
-                self._limit_market = "UP"
-            elif action == 7:
-                self._trade_price = row["down_ask"] - 1
-                self._limit_market = "DOWN"
-            elif action == 8:
-                self._trade_price = row["down_bid"] + 1
-                self._limit_market = "DOWN"
+        elif action in (5, 7):
+            # Maker limit buy
+            price = (row["up_ask"] - 1) if action == 5 else (row["down_ask"] - 1)
+            direction = "UP" if action == 5 else "DOWN"
+            self._pending_limit = {
+                "action": action, "price": price, "market": direction,
+                "order_type": "buy", "placed_at_step": self._current_step,
+            }
+
+        elif action in (6, 8):
+            # Maker limit sell
+            price = (row["up_bid"] + 1) if action == 6 else (row["down_bid"] + 1)
+            direction = self._share_direction  # sell in the direction we hold
+            self._pending_limit = {
+                "action": action, "price": price, "market": direction,
+                "order_type": "sell", "placed_at_step": self._current_step,
+            }
 
     def _check_limit_fill(self, row: dict[str, Any]) -> None:
-        """Check if a pending limit order fills on this row."""
-        action = self._trade_action
-        price = self._trade_price
+        """Check if the pending limit order fills on this row."""
+        pending = self._pending_limit
+        action = pending["action"]
+        price = pending["price"]
 
         if action in (5, 7):
-            # Buy limit: fills if future ask <= order price
+            # Limit buy: fills if market ask <= order price
             field = "up_ask" if action == 5 else "down_ask"
             market_price = row.get(field)
             if market_price is not None and market_price <= price:
-                self._limit_filled = True
+                direction = pending["market"]
+                shares = compute_buy_shares(price, is_maker=True)
+                self._shares_owned = shares
+                self._share_direction = direction
+                self._net_cash -= SHARES_PER_BUY * price
+                self._trades.append({
+                    "type": "buy", "action": action, "price": price,
+                    "shares": shares, "is_maker": True, "direction": direction,
+                })
+                self._pending_limit = None
 
         elif action in (6, 8):
-            # Sell limit: fills if future bid >= order price
+            # Limit sell: fills if market bid >= order price
             field = "up_bid" if action == 6 else "down_bid"
             market_price = row.get(field)
             if market_price is not None and market_price >= price:
-                self._limit_filled = True
-
-    def skip_to_end(self) -> float:
-        """Skip remaining rows and return the final reward.
-
-        Call immediately after a non-zero action has been taken to avoid
-        running the model on rows where it can only choose "do nothing".
-
-        For taker actions: O(1) — reward is fully determined by the already-
-        recorded trade price and the episode outcome.
-        For maker/limit actions: scans remaining rows for a fill check (no
-        model inference needed), then computes the final reward.
-
-        Returns:
-            Final episode reward (same value as stepping through all rows).
-        """
-        assert self._has_acted, "skip_to_end() requires has_acted=True"
-
-        if self._is_maker:
-            # Scan remaining rows for limit-fill checks only.
-            # Once filled, reward is fully determined — no need to continue.
-            while self._current_step < len(self._rows):
-                self._check_limit_fill(self._rows[self._current_step])
-                self._current_step += 1
-                if self._limit_filled:
-                    self._current_step = len(self._rows)
-                    break
-        else:
-            # Taker: reward is deterministic immediately, no scan needed
-            self._current_step = len(self._rows)
-
-        return self._compute_final_reward()
+                proceeds = compute_sell_proceeds(self._shares_owned, price, is_maker=True)
+                self._trades.append({
+                    "type": "sell", "action": action, "price": price,
+                    "shares": self._shares_owned, "proceeds": proceeds,
+                    "is_maker": True, "direction": self._share_direction,
+                })
+                self._net_cash += proceeds
+                self._shares_owned = 0.0
+                self._share_direction = ""
+                self._pending_limit = None
 
     def _compute_final_reward(self) -> float:
-        """Compute reward at episode end."""
-        if self._trade_action is None or self._trade_action == 0:
-            return 0.0
+        """Compute episode reward at end: (net_cash + end_payout) / REWARD_NORMALIZATION."""
+        # Payout for any shares still held at episode end
+        if self._shares_owned > 0 and self._share_direction:
+            payout = (
+                self._shares_owned * 100.0
+                if self._outcome == self._share_direction
+                else 0.0
+            )
+        else:
+            payout = 0.0
 
-        filled = not self._is_maker or self._limit_filled
-
-        return compute_reward(
-            action=self._trade_action,
-            trade_price=self._trade_price,
-            outcome=self._outcome,
-            is_maker=self._is_maker,
-            filled=filled,
-        )
+        # Pending unfilled limit → no cash effect (order simply cancels)
+        total_pnl = self._net_cash + payout
+        return total_pnl / REWARD_NORMALIZATION

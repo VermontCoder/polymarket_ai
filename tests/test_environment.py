@@ -6,7 +6,6 @@ import pytest
 from src.environment import (
     Environment,
     compute_action_mask,
-    compute_reward,
     maker_rebate,
     taker_fee,
     NUM_ACTIONS,
@@ -297,248 +296,35 @@ class TestActionMask:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Reward Computation (all 8 trade/outcome combinations)
+# Tests: Environment — Basic Flow (new multi-trade mechanics)
 # ---------------------------------------------------------------------------
 
-class TestRewardComputation:
-    """All 8 trade/outcome combinations produce correct profit/loss."""
-
-    def test_buy_up_outcome_up(self):
-        """Buy UP at 60c, outcome UP -> payout 100c, profit."""
-        price = 60.0
-        fee = taker_fee(price)
-        cost = price + fee
-        payout = 100.0
-        expected = (payout - cost) / 100.0
-        reward = compute_reward(1, price, "UP", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_buy_up_outcome_down(self):
-        """Buy UP at 60c, outcome DOWN -> payout 0c, loss."""
-        price = 60.0
-        fee = taker_fee(price)
-        cost = price + fee
-        payout = 0.0
-        expected = (payout - cost) / 100.0
-        reward = compute_reward(1, price, "DOWN", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_sell_up_outcome_up(self):
-        """Sell UP at 60c, outcome UP -> owe 100c, loss."""
-        price = 60.0
-        fee = taker_fee(price)
-        received = price - fee
-        payout_owed = 100.0
-        expected = (received - payout_owed) / 100.0
-        reward = compute_reward(2, price, "UP", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_sell_up_outcome_down(self):
-        """Sell UP at 60c, outcome DOWN -> owe 0c, profit."""
-        price = 60.0
-        fee = taker_fee(price)
-        received = price - fee
-        payout_owed = 0.0
-        expected = (received - payout_owed) / 100.0
-        reward = compute_reward(2, price, "DOWN", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_buy_down_outcome_down(self):
-        """Buy DOWN at 40c, outcome DOWN -> payout 100c, profit."""
-        price = 40.0
-        fee = taker_fee(price)
-        cost = price + fee
-        payout = 100.0
-        expected = (payout - cost) / 100.0
-        reward = compute_reward(3, price, "DOWN", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_buy_down_outcome_up(self):
-        """Buy DOWN at 40c, outcome UP -> payout 0c, loss."""
-        price = 40.0
-        fee = taker_fee(price)
-        cost = price + fee
-        payout = 0.0
-        expected = (payout - cost) / 100.0
-        reward = compute_reward(3, price, "UP", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_sell_down_outcome_down(self):
-        """Sell DOWN at 40c, outcome DOWN -> owe 100c, loss."""
-        price = 40.0
-        fee = taker_fee(price)
-        received = price - fee
-        payout_owed = 100.0
-        expected = (received - payout_owed) / 100.0
-        reward = compute_reward(4, price, "DOWN", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_sell_down_outcome_up(self):
-        """Sell DOWN at 40c, outcome UP -> owe 0c, profit."""
-        price = 40.0
-        fee = taker_fee(price)
-        received = price - fee
-        payout_owed = 0.0
-        expected = (received - payout_owed) / 100.0
-        reward = compute_reward(4, price, "UP", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_no_action_reward_zero(self):
-        """No action (unfilled or action 0) produces reward = 0."""
-        # unfilled limit order
-        reward = compute_reward(5, 55.0, "UP", is_maker=True, filled=False)
-        assert reward == 0.0
-
-    def test_reward_normalized(self):
-        """Reward is divided by 100 to scale to approximately [-1, 1]."""
-        # Buy UP at 1c, outcome UP: payout=100, cost=1+fee
-        # Reward should be close to +1 (max gain)
-        reward = compute_reward(1, 1.0, "UP", is_maker=False, filled=True)
-        assert -1.0 <= reward <= 1.0
-
-
-# ---------------------------------------------------------------------------
-# Tests: Maker Reward
-# ---------------------------------------------------------------------------
-
-class TestMakerReward:
-    """Maker orders get rebate instead of paying fee."""
-
-    def test_maker_buy_up_outcome_up(self):
-        """Maker buy UP at 55c, outcome UP -> rebate reduces cost."""
-        price = 55.0
-        rebate = maker_rebate(price)
-        cost = price - rebate
-        payout = 100.0
-        expected = (payout - cost) / 100.0
-        reward = compute_reward(5, price, "UP", is_maker=True, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_maker_sell_up_outcome_down(self):
-        """Maker sell UP at 56c, outcome DOWN -> rebate adds to received."""
-        price = 56.0
-        rebate = maker_rebate(price)
-        received = price + rebate
-        payout_owed = 0.0
-        expected = (received - payout_owed) / 100.0
-        reward = compute_reward(6, price, "DOWN", is_maker=True, filled=True)
-        assert reward == pytest.approx(expected)
-        # Should be positive (profit from selling UP when outcome is DOWN)
-        assert reward > 0
-
-    def test_maker_buy_down_outcome_down(self):
-        """Maker buy DOWN at 44c, outcome DOWN."""
-        price = 44.0
-        rebate = maker_rebate(price)
-        cost = price - rebate
-        payout = 100.0
-        expected = (payout - cost) / 100.0
-        reward = compute_reward(7, price, "DOWN", is_maker=True, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_maker_sell_down_outcome_up(self):
-        """Maker sell DOWN at 45c, outcome UP -> owe 0, profit."""
-        price = 45.0
-        rebate = maker_rebate(price)
-        received = price + rebate
-        payout_owed = 0.0
-        expected = (received - payout_owed) / 100.0
-        reward = compute_reward(8, price, "UP", is_maker=True, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_unfilled_maker_reward_zero(self):
-        """Unfilled maker orders yield reward = 0."""
-        for action in [5, 6, 7, 8]:
-            reward = compute_reward(action, 50.0, "UP", is_maker=True, filled=False)
-            assert reward == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Tests: Environment - Basic Episode Flow
-# ---------------------------------------------------------------------------
-
-class TestEnvironmentFlow:
-    """Test the episode flow and basic environment behavior."""
+class TestEnvironmentBasicFlow:
+    """Basic episode flow under new multi-trade mechanics."""
 
     def test_reset_initializes_state(self):
         env = Environment()
         ep = _make_episode(num_rows=5)
         env.reset(ep)
         assert env.current_step == 0
-        assert not env.has_acted
+        assert env.shares_owned == 0.0
         assert env.num_rows == 5
 
-    def test_full_episode_do_nothing(self):
-        """Doing nothing every step gives reward 0."""
+    def test_full_episode_do_nothing_reward_zero(self):
         env = Environment()
         ep = _make_episode(num_rows=5, outcome="UP")
         env.reset(ep)
-
         for _ in range(4):
             done, reward = env.step(0)
             assert not done
-
         done, reward = env.step(0)
         assert done
-        assert reward == 0.0
-
-    def test_at_most_one_action(self):
-        """Agent can make at most one trade per episode."""
-        env = Environment()
-        ep = _make_episode(num_rows=5, outcome="UP")
-        env.reset(ep)
-
-        # Take action on first step
-        env.step(1)  # Buy UP
-        assert env.has_acted
-
-        # All subsequent steps: only action 0 should be valid
-        for _ in range(4):
-            mask = env.get_action_mask()
-            assert mask[0] is np.True_
-            for i in range(1, 9):
-                assert mask[i] is np.False_
-            done, _ = env.step(0)
-            if done:
-                break
-
-    def test_never_two_actions(self):
-        """Trying to take two non-zero actions raises assertion."""
-        env = Environment()
-        ep = _make_episode(num_rows=5, outcome="UP")
-        env.reset(ep)
-
-        env.step(1)  # First action OK
-
-        # Second non-zero action should be masked -> assertion error
-        with pytest.raises(AssertionError):
-            env.step(1)
-
-    def test_observation_excludes_forbidden_fields(self):
-        """Observation does not contain forbidden fields."""
-        env = Environment()
-        ep = _make_episode(num_rows=3)
-        env.reset(ep)
-        obs = env.get_observation()
-        for field in ["outcome", "end_price", "current_price", "diff_usd",
-                       "start_price", "session_id", "timestamp"]:
-            assert field not in obs
-
-    def test_observation_contains_allowed_fields(self):
-        """Observation contains allowed dynamic fields."""
-        env = Environment()
-        ep = _make_episode(num_rows=3)
-        env.reset(ep)
-        obs = env.get_observation()
-        for field in ["up_bid", "up_ask", "down_bid", "down_ask",
-                       "diff_pct", "time_to_close"]:
-            assert field in obs
+        assert reward == pytest.approx(0.0)
 
     def test_step_advances_current_step(self):
         env = Environment()
         ep = _make_episode(num_rows=3)
         env.reset(ep)
-        assert env.current_step == 0
         env.step(0)
         assert env.current_step == 1
         env.step(0)
@@ -555,367 +341,367 @@ class TestEnvironmentFlow:
         done, _ = env.step(0)
         assert done
 
-    def test_reset_clears_state(self):
-        """Resetting with new episode clears all previous state."""
+    def test_reset_clears_all_state(self):
         env = Environment()
         ep1 = _make_episode(num_rows=3, outcome="UP")
         env.reset(ep1)
-        env.step(1)  # Act
-        assert env.has_acted
+        env.step(1)  # buy UP
+        assert env.shares_owned > 0
 
         ep2 = _make_episode(num_rows=5, outcome="DOWN")
         env.reset(ep2)
-        assert not env.has_acted
+        assert env.shares_owned == 0.0
         assert env.current_step == 0
         assert env.num_rows == 5
 
-
-# ---------------------------------------------------------------------------
-# Tests: Environment - Taker Actions with Rewards
-# ---------------------------------------------------------------------------
-
-class TestEnvironmentTakerRewards:
-    """End-to-end reward computation for taker actions."""
-
-    def test_buy_up_correct_outcome(self):
-        """Buy UP at ask, outcome UP -> correct positive reward."""
+    def test_observation_excludes_forbidden_fields(self):
         env = Environment()
-        ep = _make_episode(num_rows=2, outcome="UP", up_ask=60.0)
+        ep = _make_episode(num_rows=3)
         env.reset(ep)
+        obs = env.get_observation()
+        for field in ["outcome", "end_price", "current_price", "diff_usd",
+                       "start_price", "session_id", "timestamp"]:
+            assert field not in obs
 
-        env.step(1)  # Buy UP at 60c
+    def test_observation_contains_is_sell_mode(self):
+        """is_sell_mode is always present in observation."""
+        env = Environment()
+        ep = _make_episode(num_rows=3)
+        env.reset(ep)
+        obs = env.get_observation()
+        assert "is_sell_mode" in obs
+        assert obs["is_sell_mode"] == 0.0  # buy mode initially
+
+    def test_invalid_action_raises(self):
+        env = Environment()
+        ep = _make_episode(num_rows=3)
+        env.reset(ep)
+        with pytest.raises(AssertionError):
+            env.step(2)  # sell in buy mode — masked
+
+
+# ---------------------------------------------------------------------------
+# Tests: Environment — Buy/Sell Mode
+# ---------------------------------------------------------------------------
+
+class TestBuySellMode:
+    """Environment enforces buy → sell → buy alternation via shares_owned."""
+
+    def test_buy_sets_shares_owned(self):
+        """Taker buy UP sets shares_owned > 0 and is_sell_mode=1."""
+        env = Environment()
+        ep = _make_episode(num_rows=3, outcome="UP", up_ask=50.0)
+        env.reset(ep)
+        env.step(1)  # buy UP
+        expected = compute_buy_shares(50.0, is_maker=False)
+        assert env.shares_owned == pytest.approx(expected)
+        obs = env.get_observation()
+        assert obs["is_sell_mode"] == 1.0
+
+    def test_sell_clears_shares_owned(self):
+        """Taker sell after buying clears shares_owned to 0."""
+        env = Environment()
+        rows = [
+            _make_row(up_ask=50.0, up_bid=49.0),
+            _make_row(up_ask=51.0, up_bid=50.0),
+            _make_row(up_ask=52.0, up_bid=51.0),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env.reset(ep)
+        env.step(1)   # buy UP at row 0
+        assert env.shares_owned > 0
+        env.step(2)   # sell UP at row 1
+        assert env.shares_owned == 0.0
+
+    def test_is_sell_mode_false_after_sell(self):
+        """is_sell_mode returns 0.0 after selling all shares."""
+        env = Environment()
+        rows = [
+            _make_row(up_ask=50.0, up_bid=49.0),
+            _make_row(up_ask=51.0, up_bid=50.0),
+            _make_row(),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env.reset(ep)
+        env.step(1)   # buy UP
+        env.step(2)   # sell UP
+        obs = env.get_observation()
+        assert obs["is_sell_mode"] == 0.0
+
+    def test_buy_mode_blocks_sell_action(self):
+        """In buy mode, attempting to sell raises AssertionError."""
+        env = Environment()
+        ep = _make_episode(num_rows=3)
+        env.reset(ep)
+        with pytest.raises(AssertionError):
+            env.step(2)  # sell UP in buy mode
+
+    def test_sell_mode_blocks_buy_action(self):
+        """In sell mode, attempting to buy raises AssertionError."""
+        env = Environment()
+        rows = [_make_row(up_ask=50.0), _make_row(up_ask=50.0)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env.reset(ep)
+        env.step(1)  # buy UP → now in sell mode
+        with pytest.raises(AssertionError):
+            env.step(1)  # buy again → blocked
+
+    def test_sell_mode_blocks_wrong_direction(self):
+        """Holding UP shares: selling DOWN shares is blocked."""
+        env = Environment()
+        rows = [_make_row(up_ask=50.0), _make_row()]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env.reset(ep)
+        env.step(1)  # buy UP
+        with pytest.raises(AssertionError):
+            env.step(4)  # sell DOWN — wrong direction
+
+    def test_buy_sell_buy_cycle(self):
+        """Agent can buy→sell→buy within one episode."""
+        env = Environment()
+        rows = [
+            _make_row(up_ask=50.0, up_bid=49.0),
+            _make_row(up_ask=51.0, up_bid=52.0),
+            _make_row(up_ask=52.0, up_bid=51.0),
+            _make_row(up_ask=53.0, up_bid=52.0),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env.reset(ep)
+        env.step(1)   # buy UP (row 0) → sell mode
+        assert env.shares_owned > 0
+        env.step(2)   # sell UP (row 1) → buy mode
+        assert env.shares_owned == 0.0
+        env.step(1)   # buy UP again (row 2) → sell mode
+        assert env.shares_owned > 0
+
+    def test_multiple_actions_per_episode(self):
+        """Episode can have more than one trade (buy + sell)."""
+        env = Environment()
+        rows = [
+            _make_row(up_ask=50.0, up_bid=49.0),
+            _make_row(up_ask=51.0, up_bid=55.0),
+            _make_row(),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env.reset(ep)
+        env.step(1)   # buy
+        env.step(2)   # sell
         done, reward = env.step(0)
         assert done
 
-        fee = taker_fee(60.0)
-        expected = (100.0 - (60.0 + fee)) / 100.0
-        assert reward == pytest.approx(expected)
 
-    def test_buy_up_wrong_outcome(self):
-        """Buy UP at ask, outcome DOWN -> negative reward."""
+# ---------------------------------------------------------------------------
+# Tests: Environment — Multi-Trade P&L
+# ---------------------------------------------------------------------------
+
+class TestMultiTradePnL:
+    """Reward reflects full episode P&L including intra-episode trades."""
+
+    def test_buy_and_hold_win_positive_reward(self):
+        """Buy UP, hold to end, outcome UP → positive reward."""
         env = Environment()
-        ep = _make_episode(num_rows=2, outcome="DOWN", up_ask=60.0)
+        price = 50.0
+        ep = _make_episode(num_rows=2, outcome="UP", up_ask=price)
         env.reset(ep)
+        env.step(1)   # buy UP at 50c
+        done, reward = env.step(0)
+        assert done
 
+        shares = compute_buy_shares(price, is_maker=False)
+        cash_out = SHARES_PER_BUY * price
+        payout = shares * 100.0  # UP outcome, UP shares
+        expected = (payout - cash_out) / REWARD_NORMALIZATION
+        assert reward == pytest.approx(expected)
+        assert reward > 0
+
+    def test_buy_and_hold_loss_negative_reward(self):
+        """Buy UP, hold to end, outcome DOWN → negative reward."""
+        env = Environment()
+        price = 50.0
+        ep = _make_episode(num_rows=2, outcome="DOWN", up_ask=price)
+        env.reset(ep)
         env.step(1)
         done, reward = env.step(0)
         assert done
 
-        fee = taker_fee(60.0)
-        expected = (0.0 - (60.0 + fee)) / 100.0
+        cash_out = SHARES_PER_BUY * price
+        payout = 0.0  # wrong outcome
+        expected = (payout - cash_out) / REWARD_NORMALIZATION
         assert reward == pytest.approx(expected)
         assert reward < 0
 
-    def test_sell_up_outcome_down(self):
-        """Sell UP at bid, outcome DOWN -> profit (owe nothing)."""
+    def test_buy_sell_intra_episode_profit(self):
+        """Buy UP at 50c, sell UP at 60c → intra-episode profit, no end payout."""
         env = Environment()
-        ep = _make_episode(num_rows=2, outcome="DOWN", up_bid=55.0)
+        buy_price, sell_price = 50.0, 60.0
+        rows = [
+            _make_row(up_ask=buy_price, up_bid=49.0),
+            _make_row(up_ask=61.0, up_bid=sell_price),
+            _make_row(),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
         env.reset(ep)
+        env.step(1)   # buy UP at 50c
+        env.step(2)   # sell UP at 60c
 
-        env.step(2)  # Sell UP at 55c
         done, reward = env.step(0)
         assert done
 
-        fee = taker_fee(55.0)
-        expected = (55.0 - fee - 0.0) / 100.0
-        assert reward == pytest.approx(expected)
-        assert reward > 0
+        shares = compute_buy_shares(buy_price, is_maker=False)
+        cash_out = SHARES_PER_BUY * buy_price
+        cash_in = compute_sell_proceeds(shares, sell_price, is_maker=False)
+        expected = (cash_in - cash_out) / REWARD_NORMALIZATION
+        assert reward == pytest.approx(expected, rel=1e-4)
+        assert reward > 0  # sold higher than bought
 
-    def test_buy_down_correct_outcome(self):
-        """Buy DOWN at ask, outcome DOWN -> profit."""
+    def test_no_trade_reward_zero(self):
+        """No trades → reward = 0."""
         env = Environment()
-        ep = _make_episode(num_rows=2, outcome="DOWN", down_ask=40.0)
+        ep = _make_episode(num_rows=3, outcome="UP")
         env.reset(ep)
-
-        env.step(3)
+        for _ in range(2):
+            done, r = env.step(0)
+            assert not done
         done, reward = env.step(0)
         assert done
+        assert reward == pytest.approx(0.0)
 
-        fee = taker_fee(40.0)
-        expected = (100.0 - (40.0 + fee)) / 100.0
-        assert reward == pytest.approx(expected)
-        assert reward > 0
-
-    def test_sell_down_outcome_up(self):
-        """Sell DOWN at bid, outcome UP -> profit (owe nothing)."""
+    def test_reward_normalized_by_500(self):
+        """Reward is divided by REWARD_NORMALIZATION (500), not 100."""
         env = Environment()
-        ep = _make_episode(num_rows=2, outcome="UP", down_bid=42.0)
+        price = 1.0  # cheapest buy, max win
+        ep = _make_episode(num_rows=2, outcome="UP", up_ask=price)
         env.reset(ep)
-
-        env.step(4)  # Sell DOWN at 42c
+        env.step(1)
         done, reward = env.step(0)
         assert done
+        # Max possible reward ≈ (5 * 100 - 5 * 1) / 500 ≈ 0.99
+        assert reward < 1.0
+        assert reward > 0.5  # but still substantial
 
-        fee = taker_fee(42.0)
-        expected = (42.0 - fee - 0.0) / 100.0
-        assert reward == pytest.approx(expected)
-        assert reward > 0
-
-
-# ---------------------------------------------------------------------------
-# Tests: Limit Order Fill Logic
-# ---------------------------------------------------------------------------
-
-class TestLimitOrderFill:
-    """Limit order fills when market price reaches order price."""
-
-    def test_limit_buy_up_fills(self):
-        """Limit buy UP fills when future ask <= order price."""
-        # Place limit buy UP. Order price = up_ask - 1 = 56 - 1 = 55.
-        # Next row has up_ask=55, so fill triggers.
+    def test_maker_buy_hold_win(self):
+        """Maker limit buy fills, hold to end, outcome matches → positive reward."""
+        price = 50.0  # limit placed at up_ask - 1 = 56 - 1 = 55
         rows = [
             _make_row(up_ask=56.0),
-            _make_row(up_ask=55.0),  # ask <= 55, fills
-            _make_row(up_ask=54.0),
+            _make_row(up_ask=55.0),  # fills at limit price 55
+            _make_row(),
         ]
         ep = _make_episode(outcome="UP", rows=rows)
         env = Environment()
         env.reset(ep)
-
-        env.step(5)  # Limit buy UP at 55c
-        env.step(0)
+        env.step(5)  # limit buy UP at 55c
+        env.step(0)  # wait for fill check
         done, reward = env.step(0)
         assert done
 
-        # Filled at 55c with maker rebate
-        rebate = maker_rebate(55.0)
-        expected = (100.0 - (55.0 - rebate)) / 100.0
-        assert reward == pytest.approx(expected)
+        limit_price = 55.0
+        shares = compute_buy_shares(limit_price, is_maker=True)
+        cash_out = SHARES_PER_BUY * limit_price
+        payout = shares * 100.0
+        expected = (payout - cash_out) / REWARD_NORMALIZATION
+        assert reward == pytest.approx(expected, rel=1e-4)
 
-    def test_limit_buy_up_does_not_fill(self):
-        """Limit buy UP does NOT fill when no future ask <= order price."""
+    def test_unfilled_limit_buy_no_reward(self):
+        """Unfilled limit buy order → 0 cash flow → reward 0."""
+        rows = [_make_row(up_ask=56.0)] * 3  # ask stays above 55, never fills
+        ep = _make_episode(outcome="UP", rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(5)  # limit buy UP at 55c
+        env.step(0)
+        done, reward = env.step(0)
+        assert done
+        assert reward == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Environment — Limit Orders (new mechanics)
+# ---------------------------------------------------------------------------
+
+class TestLimitOrdersMechanic:
+    """Limit orders block actions while pending; fill switches mode correctly."""
+
+    def test_pending_limit_buy_blocks_other_actions(self):
+        """After placing a limit buy, only action 0 is available until fill."""
         rows = [
             _make_row(up_ask=56.0),
-            _make_row(up_ask=57.0),  # ask > 55, no fill
+            _make_row(up_ask=57.0),  # no fill
             _make_row(up_ask=58.0),
         ]
         ep = _make_episode(outcome="UP", rows=rows)
         env = Environment()
         env.reset(ep)
+        env.step(5)  # limit buy UP at 55c
 
-        env.step(5)  # Limit buy UP at 55c
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-        assert reward == 0.0
+        # Next row: pending limit, only action 0 valid
+        mask = env.get_action_mask()
+        assert mask[0] is np.True_
+        for i in range(1, 9):
+            assert mask[i] is np.False_
 
-    def test_limit_sell_up_fills(self):
-        """Limit sell UP fills when future bid >= order price."""
-        # Place limit sell UP. Order price = up_bid + 1 = 55 + 1 = 56.
-        # Next row has up_bid=56, so fill triggers.
-        rows = [
-            _make_row(up_bid=55.0, up_ask=56.0),
-            _make_row(up_bid=56.0),  # bid >= 56, fills
-            _make_row(up_bid=57.0),
-        ]
-        ep = _make_episode(outcome="DOWN", rows=rows)
-        env = Environment()
-        env.reset(ep)
-
-        env.step(6)  # Limit sell UP at 56c
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-
-        # Sold UP at 56c, outcome DOWN -> owe 0, receive 56 + rebate
-        rebate = maker_rebate(56.0)
-        expected = (56.0 + rebate - 0.0) / 100.0
-        assert reward == pytest.approx(expected)
-        assert reward > 0
-
-    def test_limit_sell_up_does_not_fill(self):
-        """Limit sell UP does NOT fill when bid stays below order price."""
-        rows = [
-            _make_row(up_bid=55.0, up_ask=56.0),
-            _make_row(up_bid=54.0),  # bid < 56, no fill
-            _make_row(up_bid=53.0),
-        ]
-        ep = _make_episode(outcome="DOWN", rows=rows)
-        env = Environment()
-        env.reset(ep)
-
-        env.step(6)  # Limit sell UP at 56c
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-        assert reward == 0.0
-
-    def test_limit_buy_down_fills(self):
-        """Limit buy DOWN fills when future down_ask <= order price."""
-        rows = [
-            _make_row(down_ask=45.0),
-            _make_row(down_ask=44.0),  # ask <= 44, fills
-            _make_row(down_ask=43.0),
-        ]
-        ep = _make_episode(outcome="DOWN", rows=rows)
-        env = Environment()
-        env.reset(ep)
-
-        env.step(7)  # Limit buy DOWN at 44c
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-
-        rebate = maker_rebate(44.0)
-        expected = (100.0 - (44.0 - rebate)) / 100.0
-        assert reward == pytest.approx(expected)
-
-    def test_limit_buy_down_does_not_fill(self):
-        """Limit buy DOWN does NOT fill when ask stays above order price."""
-        rows = [
-            _make_row(down_ask=45.0),
-            _make_row(down_ask=46.0),  # ask > 44, no fill
-            _make_row(down_ask=47.0),
-        ]
-        ep = _make_episode(outcome="DOWN", rows=rows)
-        env = Environment()
-        env.reset(ep)
-
-        env.step(7)
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-        assert reward == 0.0
-
-    def test_limit_sell_down_fills(self):
-        """Limit sell DOWN fills when future down_bid >= order price."""
-        rows = [
-            _make_row(down_bid=44.0, down_ask=45.0),
-            _make_row(down_bid=45.0),  # bid >= 45, fills
-            _make_row(down_bid=46.0),
-        ]
-        ep = _make_episode(outcome="UP", rows=rows)
-        env = Environment()
-        env.reset(ep)
-
-        env.step(8)  # Limit sell DOWN at 45c
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-
-        rebate = maker_rebate(45.0)
-        expected = (45.0 + rebate - 0.0) / 100.0  # outcome UP, owe 0
-        assert reward == pytest.approx(expected)
-
-    def test_limit_sell_down_does_not_fill(self):
-        """Limit sell DOWN does NOT fill when bid stays below order price."""
-        rows = [
-            _make_row(down_bid=44.0, down_ask=45.0),
-            _make_row(down_bid=43.0),
-            _make_row(down_bid=42.0),
-        ]
-        ep = _make_episode(outcome="UP", rows=rows)
-        env = Environment()
-        env.reset(ep)
-
-        env.step(8)
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-        assert reward == 0.0
-
-    def test_limit_order_fills_at_order_price_not_market(self):
-        """Limit order executes at order price, not market price at fill."""
-        # Place limit buy UP at 55c. Market ask drops to 50c on fill row.
-        # Should still be filled at 55c (the order price).
+    def test_limit_buy_fill_sets_shares(self):
+        """When a limit buy fills, shares_owned becomes positive."""
         rows = [
             _make_row(up_ask=56.0),
-            _make_row(up_ask=50.0),  # fills, market at 50 but order is 55
-            _make_row(up_ask=48.0),
+            _make_row(up_ask=55.0),  # fills at 55c
+            _make_row(),
         ]
         ep = _make_episode(outcome="UP", rows=rows)
         env = Environment()
         env.reset(ep)
+        env.step(5)  # limit buy UP at 55c
+        env.step(0)  # row 1: fill check runs
+        assert env.shares_owned == pytest.approx(compute_buy_shares(55.0, is_maker=True))
 
-        env.step(5)
-        env.step(0)
-        done, reward = env.step(0)
-        assert done
-
-        # Must fill at 55c, not 50c
-        rebate = maker_rebate(55.0)
-        expected = (100.0 - (55.0 - rebate)) / 100.0
-        assert reward == pytest.approx(expected)
-
-    def test_limit_order_does_not_fill_on_action_row(self):
-        """Limit order should not check fill on the same row it was placed."""
-        # The ask is already <= order price on the placement row,
-        # but fill should only check FUTURE rows.
+    def test_limit_sell_fill_clears_shares(self):
+        """When a limit sell fills, shares_owned drops to 0."""
         rows = [
-            _make_row(up_ask=55.0),  # Order at 54c. ask=55 > 54. No fill here.
-            _make_row(up_ask=56.0),  # ask=56 > 54. No fill.
-            _make_row(up_ask=57.0),  # No fill.
+            _make_row(up_ask=50.0, up_bid=49.0),
+            _make_row(up_ask=51.0, up_bid=50.0),  # buy row
+            _make_row(up_ask=52.0, up_bid=51.0),
+            _make_row(up_ask=53.0, up_bid=57.0),  # bid >= 51 → limit sell fills
         ]
         ep = _make_episode(outcome="UP", rows=rows)
         env = Environment()
         env.reset(ep)
+        env.step(1)   # taker buy UP at 50c (row 0)
+        env.step(6)   # limit sell UP at 50c (row 1, bid=50 → order at 51c)
+        env.step(0)   # row 2: bid=51 >= 51, should fill
+        done, reward = env.step(0)
+        assert done or env.shares_owned == 0.0
 
-        env.step(5)  # Limit buy UP at 54c
+    def test_limit_fill_only_after_placement_row(self):
+        """Fill check does not fire on the same row the limit order was placed."""
+        rows = [
+            _make_row(up_ask=55.0),
+            _make_row(up_ask=56.0),  # ask went up, no fill
+            _make_row(up_ask=57.0),
+        ]
+        ep = _make_episode(outcome="UP", rows=rows)
+        env = Environment()
+        env.reset(ep)
+        env.step(5)   # limit buy UP at 54c
         env.step(0)
         done, reward = env.step(0)
         assert done
-        assert reward == 0.0  # Never filled
+        assert reward == pytest.approx(0.0)  # never filled
 
-    def test_limit_fill_with_null_market_price(self):
-        """If the relevant bid/ask is null, the limit order cannot fill."""
+    def test_null_market_price_prevents_fill(self):
+        """Null bid/ask prevents limit fill on that row."""
         rows = [
             _make_row(up_ask=56.0),
-            _make_row(up_ask=None),  # null, no fill possible
+            _make_row(up_ask=None),  # null → no fill
             _make_row(up_ask=None),
         ]
         ep = _make_episode(outcome="UP", rows=rows)
         env = Environment()
         env.reset(ep)
-
-        env.step(5)  # Limit buy UP at 55c
+        env.step(5)  # limit buy UP at 55c
         env.step(0)
         done, reward = env.step(0)
         assert done
-        assert reward == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Tests: Trade Info
-# ---------------------------------------------------------------------------
-
-class TestTradeInfo:
-    """Test trade_info property."""
-
-    def test_no_trade_info_before_action(self):
-        env = Environment()
-        ep = _make_episode(num_rows=3)
-        env.reset(ep)
-        assert env.trade_info is None
-
-    def test_taker_trade_info(self):
-        env = Environment()
-        ep = _make_episode(num_rows=3, up_ask=60.0)
-        env.reset(ep)
-        env.step(1)  # Buy UP at 60c
-
-        info = env.trade_info
-        assert info is not None
-        assert info["action"] == 1
-        assert info["price"] == 60.0
-        assert info["is_maker"] is False
-        assert info["filled"] is True
-
-    def test_maker_trade_info_unfilled(self):
-        """Maker order trade info reflects unfilled status."""
-        rows = [
-            _make_row(up_ask=56.0),
-            _make_row(up_ask=57.0),
-        ]
-        env = Environment()
-        ep = _make_episode(outcome="UP", rows=rows)
-        env.reset(ep)
-        env.step(5)  # Limit buy UP at 55c
-
-        info = env.trade_info
-        assert info["action"] == 5
-        assert info["price"] == 55.0
-        assert info["is_maker"] is True
-        assert info["filled"] is False  # Not filled yet
+        assert reward == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -940,150 +726,6 @@ class TestEpisodeInfo:
         assert "start_price" not in info
         assert "session_id" not in info
         assert "rows" not in info
-
-
-# ---------------------------------------------------------------------------
-# Tests: skip_to_end() early termination
-# ---------------------------------------------------------------------------
-
-class TestSkipToEnd:
-    """Environment.skip_to_end() fast-forwards remaining rows and returns final reward."""
-
-    def test_taker_buy_up_win_returns_correct_reward(self):
-        """After buying UP, outcome UP: skip_to_end returns the correct positive reward."""
-        rows = [_make_row(up_ask=56.0) for _ in range(5)]
-        ep = _make_episode(outcome="UP", rows=rows)
-        env = Environment()
-        env.reset(ep)
-        env.step(1)  # buy UP taker at row 0
-
-        reward = env.skip_to_end()
-
-        expected = compute_reward(1, 56.0, "UP", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_taker_buy_up_loss_returns_negative_reward(self):
-        """After buying UP, outcome DOWN: skip_to_end returns a negative reward."""
-        rows = [_make_row(up_ask=56.0) for _ in range(5)]
-        ep = _make_episode(outcome="DOWN", rows=rows)
-        env = Environment()
-        env.reset(ep)
-        env.step(1)  # buy UP taker
-
-        reward = env.skip_to_end()
-
-        expected = compute_reward(1, 56.0, "DOWN", is_maker=False, filled=True)
-        assert reward == pytest.approx(expected)
-        assert reward < 0
-
-    def test_taker_skip_advances_current_step_to_end(self):
-        """After skip_to_end(), current_step equals num_rows."""
-        rows = [_make_row() for _ in range(10)]
-        ep = _make_episode(rows=rows)
-        env = Environment()
-        env.reset(ep)
-        env.step(1)  # act at row 0
-
-        env.skip_to_end()
-
-        assert env.current_step == env.num_rows
-
-    def test_limit_fills_on_later_row_returns_filled_reward(self):
-        """Limit buy UP fills when future ask drops to order price."""
-        # Row 0: up_ask=56 -> limit placed at 55
-        # Row 1: up_ask=55 -> fills (ask <= 55)
-        rows = [
-            _make_row(up_ask=56.0, up_bid=54.0),
-            _make_row(up_ask=55.0, up_bid=53.0),  # fill row
-            _make_row(up_ask=55.0, up_bid=53.0),
-        ]
-        ep = _make_episode(outcome="UP", rows=rows)
-        env = Environment()
-        env.reset(ep)
-        env.step(5)  # limit buy UP at ask-1=55
-
-        reward = env.skip_to_end()
-
-        expected = compute_reward(5, 55.0, "UP", is_maker=True, filled=True)
-        assert reward == pytest.approx(expected)
-
-    def test_limit_no_fill_returns_zero(self):
-        """Limit buy UP with no fill row returns reward=0."""
-        rows = [_make_row(up_ask=60.0) for _ in range(5)]
-        ep = _make_episode(outcome="UP", rows=rows)
-        env = Environment()
-        env.reset(ep)
-        env.step(5)  # limit buy UP at 59; ask stays at 60 -> never fills
-
-        reward = env.skip_to_end()
-
-        assert reward == 0.0
-
-    def test_skip_to_end_requires_has_acted(self):
-        """skip_to_end() raises AssertionError if called before any action."""
-        ep = _make_episode()
-        env = Environment()
-        env.reset(ep)
-
-        with pytest.raises(AssertionError):
-            env.skip_to_end()
-
-    def test_skip_to_end_matches_full_step_through_reward(self):
-        """skip_to_end() produces the same reward as stepping through all rows."""
-        rows = [_make_row(up_ask=60.0) for _ in range(20)]
-        ep = _make_episode(outcome="UP", rows=rows)
-
-        # Approach 1: skip_to_end after acting at row 0
-        env1 = Environment()
-        env1.reset(ep)
-        env1.step(1)  # buy UP taker
-        reward_skip = env1.skip_to_end()
-
-        # Approach 2: manually step through all rows
-        env2 = Environment()
-        env2.reset(ep)
-        acted = False
-        reward_step = None
-        for _ in range(env2.num_rows):
-            action = 1 if not acted else 0
-            done, r = env2.step(action)
-            if not acted and action == 1:
-                acted = True
-            if done:
-                reward_step = r
-                break
-
-        assert reward_skip == pytest.approx(reward_step)
-
-    def test_limit_skip_matches_full_step_through_reward(self):
-        """skip_to_end() for a limit order matches stepping through all rows."""
-        rows = [
-            _make_row(up_ask=56.0, up_bid=54.0),
-            _make_row(up_ask=56.0, up_bid=54.0),  # no fill
-            _make_row(up_ask=55.0, up_bid=53.0),  # fills
-            _make_row(up_ask=54.0, up_bid=52.0),
-        ]
-        ep = _make_episode(outcome="UP", rows=rows)
-
-        env1 = Environment()
-        env1.reset(ep)
-        env1.step(5)  # limit buy UP at 55
-        reward_skip = env1.skip_to_end()
-
-        env2 = Environment()
-        env2.reset(ep)
-        acted = False
-        reward_step = None
-        for _ in range(env2.num_rows):
-            action = 5 if not acted else 0
-            done, r = env2.step(action)
-            if not acted and action == 5:
-                acted = True
-            if done:
-                reward_step = r
-                break
-
-        assert reward_skip == pytest.approx(reward_step)
 
 
 # ---------------------------------------------------------------------------
