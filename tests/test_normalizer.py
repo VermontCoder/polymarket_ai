@@ -198,7 +198,7 @@ class TestDynamicEncoding:
         norm = _fitted_normalizer()
         row = _make_row()
         dynamic = norm.encode_dynamic(row)
-        assert dynamic.shape == (11,)
+        assert dynamic.shape == (12,)
         assert dynamic.dtype == np.float32
 
     def test_bid_ask_encoding(self):
@@ -322,7 +322,7 @@ class TestEpisodeDynamic:
         norm = _fitted_normalizer()
         ep = _make_episode(rows=[_make_row(), _make_row(), _make_row()])
         result = norm.encode_episode_dynamic(ep)
-        assert result.shape == (3, 11)
+        assert result.shape == (3, 12)
         assert result.dtype == np.float32
 
 
@@ -468,7 +468,7 @@ class TestIntegrationWithData:
             assert static.shape == (37,)
             dynamic = norm.encode_episode_dynamic(ep)
             assert dynamic.shape[0] == len(ep["rows"])
-            assert dynamic.shape[1] == 11
+            assert dynamic.shape[1] == 12
 
     def test_static_values_in_expected_ranges(self, real_data):
         """Check that encoded static features are in sensible ranges."""
@@ -505,3 +505,55 @@ class TestIntegrationWithData:
                     assert 0.0 <= dynamic[i] <= 1.0
             # time_to_close clamped [0, 1]
             assert 0.0 <= dynamic[10] <= 1.0
+            # is_sell_mode defaults to 0.0 for raw rows (no env state)
+            assert dynamic[11] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Tests: is_sell_mode encoding and DYNAMIC_DIM=12
+# ---------------------------------------------------------------------------
+
+class TestIsSellModeEncoding:
+    """encode_dynamic includes is_sell_mode at index 11; DYNAMIC_DIM == 12."""
+
+    def test_dynamic_dim_is_12(self):
+        """DYNAMIC_DIM is 12 after adding is_sell_mode."""
+        assert Normalizer.DYNAMIC_DIM == 12
+
+    def test_encode_dynamic_shape_is_12(self):
+        """encode_dynamic returns a (12,) vector."""
+        norm = _fitted_normalizer()
+        vec = norm.encode_dynamic(_make_row())
+        assert vec.shape == (12,)
+
+    def test_encode_dynamic_is_sell_mode_present_1(self):
+        """encode_dynamic: is_sell_mode=1.0 at index 11 when provided."""
+        norm = _fitted_normalizer()
+        row = {**_make_row(), "is_sell_mode": 1.0}
+        vec = norm.encode_dynamic(row)
+        assert vec[11] == pytest.approx(1.0)
+
+    def test_encode_dynamic_is_sell_mode_present_0(self):
+        """encode_dynamic: is_sell_mode=0.0 at index 11 when in buy mode."""
+        norm = _fitted_normalizer()
+        row = {**_make_row(), "is_sell_mode": 0.0}
+        vec = norm.encode_dynamic(row)
+        assert vec[11] == pytest.approx(0.0)
+
+    def test_encode_dynamic_is_sell_mode_absent_defaults_to_zero(self):
+        """When is_sell_mode absent from row (raw episode row), defaults to 0.0."""
+        norm = _fitted_normalizer()
+        row = _make_row()  # no is_sell_mode key
+        assert "is_sell_mode" not in row
+        vec = norm.encode_dynamic(row)
+        assert vec.shape == (12,)
+        assert vec[11] == pytest.approx(0.0)
+
+    def test_encode_episode_dynamic_shape_12(self):
+        """encode_episode_dynamic produces (T, 12) output."""
+        norm = _fitted_normalizer()
+        ep = _make_episode(rows=[_make_row(), _make_row(), _make_row()])
+        result = norm.encode_episode_dynamic(ep)
+        assert result.shape == (3, 12)
+        # All is_sell_mode should be 0.0 (raw rows have no env state)
+        assert (result[:, 11] == 0.0).all()

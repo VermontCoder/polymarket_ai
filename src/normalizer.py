@@ -10,7 +10,7 @@ Static features (per episode): 37 dims
   [35]    avg_pct_variance_hour / std (0 if null)
   [36]    avg_pct_variance_hour is_null flag
 
-Dynamic features (per row): 11 dims
+Dynamic features (per row): 12 dims
   [0]  up_bid / 100 (0 if null)
   [1]  up_bid is_null flag
   [2]  up_ask / 100 (0 if null)
@@ -22,6 +22,7 @@ Dynamic features (per row): 11 dims
   [8]  diff_pct / std (0 if null)
   [9]  diff_pct is_null flag
   [10] time_to_close / 300000, clamped [0, 1]
+  [11] is_sell_mode: 1.0 if holding shares, 0.0 otherwise (binary, no normalization)
 """
 
 import math
@@ -34,7 +35,7 @@ class Normalizer:
     """Computes training-set statistics and encodes episode features."""
 
     STATIC_DIM = 37
-    DYNAMIC_DIM = 11
+    DYNAMIC_DIM = 12
 
     def __init__(self) -> None:
         self.std_diff_pct_prev_session: float = 1.0
@@ -128,13 +129,15 @@ class Normalizer:
         return vec
 
     def encode_dynamic(self, row: dict[str, Any]) -> np.ndarray:
-        """Encode a single row's dynamic features into an 11-dim vector.
+        """Encode a single row's dynamic features into a 12-dim vector.
 
         Args:
-            row: A row dict from an episode's 'rows' list.
+            row: A row dict from an episode's 'rows' list. May include
+                 is_sell_mode (added by Environment.get_observation()).
+                 If absent, defaults to 0.0 (buy mode).
 
         Returns:
-            numpy array of shape (11,) with float32 dtype.
+            numpy array of shape (12,) with float32 dtype.
         """
         assert self._fitted, "Must call fit() before encoding"
 
@@ -168,18 +171,24 @@ class Normalizer:
         else:
             vec[10] = max(0.0, min(1.0, ttc / 300000.0))
 
+        # is_sell_mode: index 11, binary (0.0 or 1.0), no normalization needed
+        vec[11] = float(row.get("is_sell_mode", 0.0))
+
         return vec
 
     def encode_episode_dynamic(
         self, episode: dict[str, Any]
     ) -> np.ndarray:
-        """Encode all rows in an episode into a (T, 11) array.
+        """Encode all rows in an episode into a (T, 12) array.
+
+        Raw episode rows lack is_sell_mode (which is environment state, not
+        row data). Missing is_sell_mode defaults to 0.0 at dim 11.
 
         Args:
             episode: An episode dict.
 
         Returns:
-            numpy array of shape (num_rows, 11) with float32 dtype.
+            numpy array of shape (num_rows, 12) with float32 dtype.
         """
         rows = episode["rows"]
         result = np.zeros((len(rows), self.DYNAMIC_DIM), dtype=np.float32)
