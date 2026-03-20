@@ -1145,12 +1145,12 @@ class TestShareCalculations:
         expected = round(SHARES_PER_BUY * (1 + maker_rebate(price) / price), 2)
         assert compute_buy_shares(price, is_maker=True) == pytest.approx(expected)
 
-    def test_taker_buy_shares_less_than_or_equal_five(self):
+    def test_taker_buy_shares_less_than_five(self):
         """Taker buy yields <= 5.0 shares (fee is positive, but rounds to 5.0 at extremes)."""
         for price in [1.0, 25.0, 50.0, 75.0, 99.0]:
             assert compute_buy_shares(price, is_maker=False) <= 5.0
 
-    def test_maker_buy_shares_greater_than_or_equal_five(self):
+    def test_maker_buy_shares_more_than_five(self):
         """Maker buy yields >= 5.0 shares (rebate is positive, but rounds to 5.0 at extremes)."""
         for price in [1.0, 25.0, 50.0, 75.0, 99.0]:
             assert compute_buy_shares(price, is_maker=True) >= 5.0
