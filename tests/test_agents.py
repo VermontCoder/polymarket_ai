@@ -127,7 +127,7 @@ class TestDQNAgent:
         agent.reset()
 
         static = np.random.randn(37).astype(np.float32)
-        dynamic = np.random.randn(11).astype(np.float32)
+        dynamic = np.random.randn(12).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
         action = agent.select_action(static, dynamic, mask)
@@ -139,7 +139,7 @@ class TestDQNAgent:
         agent.reset()
 
         static = np.random.randn(37).astype(np.float32)
-        dynamic = np.random.randn(11).astype(np.float32)
+        dynamic = np.random.randn(12).astype(np.float32)
         # Only allow actions 0 and 1
         mask = np.array([True, True, False, False, False, False, False, False, False])
 
@@ -153,7 +153,7 @@ class TestDQNAgent:
         agent.reset()
 
         static = np.random.randn(37).astype(np.float32)
-        dynamic = np.random.randn(11).astype(np.float32)
+        dynamic = np.random.randn(12).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
         # Same input should give same output
@@ -174,7 +174,7 @@ class TestDQNAgent:
 
         # Step through multiple timesteps with different dynamic features
         for _ in range(5):
-            dynamic = np.random.randn(11).astype(np.float32)
+            dynamic = np.random.randn(12).astype(np.float32)
             agent.select_action(static, dynamic, mask)
 
         # Hidden state should have been updated (not all zeros)
@@ -187,7 +187,7 @@ class TestDQNAgent:
         agent.reset()
 
         static = np.random.randn(37).astype(np.float32)
-        dynamic = np.random.randn(11).astype(np.float32)
+        dynamic = np.random.randn(12).astype(np.float32)
         mask = np.ones(9, dtype=bool)
 
         agent.select_action(static, dynamic, mask)
@@ -203,7 +203,7 @@ class TestDQNAgent:
         agent.reset()
 
         static = np.random.randn(37).astype(np.float32)
-        dynamic = np.random.randn(11).astype(np.float32)
+        dynamic = np.random.randn(12).astype(np.float32)
         mask = np.zeros(9, dtype=bool)
         mask[0] = True
 

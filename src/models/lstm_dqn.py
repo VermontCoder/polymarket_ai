@@ -6,7 +6,7 @@ Primary architecture (~8,070 parameters):
     Linear(37, 16) -> ReLU -> 16-dim static embedding
 
   Dynamic Encoder (LSTM):
-    LSTM(input_size=11, hidden_size=32, num_layers=1)
+    LSTM(input_size=12, hidden_size=32, num_layers=1)
     Output per timestep: 32-dim hidden state
 
   Combiner + Q-Head:
@@ -45,7 +45,7 @@ class LSTMDQN(BaseModel):
     def __init__(
         self,
         static_dim: int = 37,
-        dynamic_dim: int = 11,
+        dynamic_dim: int = 12,
         num_actions: int = 9,
         lstm_hidden_size: int = 32,
         lstm_num_layers: int = 1,

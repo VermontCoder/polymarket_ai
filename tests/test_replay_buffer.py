@@ -30,8 +30,8 @@ def _make_transition(
 ) -> dict:
     """Create a minimal valid transition dict for testing."""
     static = np.full(37, static_val, dtype=np.float32)
-    dynamic = np.full(11, dynamic_val, dtype=np.float32)
-    next_dynamic = None if done else np.full(11, dynamic_val + 0.1, dtype=np.float32)
+    dynamic = np.full(12, dynamic_val, dtype=np.float32)
+    next_dynamic = None if done else np.full(12, dynamic_val + 0.1, dtype=np.float32)
     action_mask = np.ones(9, dtype=bool)
     next_action_mask = None if done else np.ones(9, dtype=bool)
 
@@ -181,10 +181,10 @@ class TestPrioritizedReplayBuffer:
         batch = buf.sample(batch_size=8, beta=0.4)
 
         assert batch["static_features"].shape == (8, 5, 37)
-        assert batch["dynamic_features"].shape == (8, 5, 11)
+        assert batch["dynamic_features"].shape == (8, 5, 12)
         assert batch["actions"].shape == (8, 5)
         assert batch["rewards"].shape == (8, 5)
-        assert batch["next_dynamic_features"].shape == (8, 5, 11)
+        assert batch["next_dynamic_features"].shape == (8, 5, 12)
         assert batch["dones"].shape == (8, 5)
         assert batch["action_masks"].shape == (8, 5, 9)
         assert batch["next_action_masks"].shape == (8, 5, 9)

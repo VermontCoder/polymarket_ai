@@ -22,7 +22,7 @@ from src.models.stacked_dqn import StackedDQN
 # ---------------------------------------------------------------------------
 
 STATIC_DIM = 37
-DYNAMIC_DIM = 11
+DYNAMIC_DIM = 12
 NUM_ACTIONS = 9
 BATCH_SIZE = 4
 SEQ_LEN = 10
@@ -56,7 +56,7 @@ def static_batch():
 
 @pytest.fixture
 def dynamic_batch():
-    """Random dynamic features (batch, seq_len, 11)."""
+    """Random dynamic features (batch, seq_len, 12)."""
     return torch.randn(BATCH_SIZE, SEQ_LEN, DYNAMIC_DIM)
 
 
@@ -224,7 +224,7 @@ class TestLSTMDQN:
 
         # Break down expected counts:
         # Static encoder: Linear(37, 16) = 37*16 + 16 = 608
-        # LSTM(11, 32, 1): 4 * (11*32 + 32*32 + 32 + 32) = 4 * (352 + 1024 + 64) = 5,760
+        # LSTM(12, 32, 1): 4 * (12*32 + 32*32 + 32 + 32) = 4 * (384 + 1024 + 64) = 5,888
         # Q-head Linear(48, 32) = 48*32 + 32 = 1,568
         # Q-head LayerNorm(32) = 32 + 32 = 64
         # Q-head Linear(32, 9) = 32*9 + 9 = 297

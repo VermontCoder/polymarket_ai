@@ -200,7 +200,10 @@ class Trainer:
     def _run_episode(
         self, episode: dict[str, Any]
     ) -> tuple[float, np.ndarray]:
-        """Run one episode, collecting transitions for the replay buffer.
+        """Run one episode, collecting all transitions for the replay buffer.
+
+        With multi-trade mechanics, all rows are informative. Reward is 0 for
+        non-terminal steps and the episode P&L at the terminal step.
 
         Returns:
             Tuple of (episode_reward, action_counts array of shape (9,)).
@@ -210,14 +213,13 @@ class Trainer:
         action_counts = np.zeros(NUM_ACTIONS, dtype=np.int64)
 
         transitions: list[dict] = []
-        prev_dynamic = None
+        final_reward = 0.0
 
         for step_idx in range(self.env.num_rows):
             obs = self.env.get_observation()
             dynamic_features = self.normalizer.encode_dynamic(obs)
             action_mask = self.env.get_action_mask()
 
-            # Epsilon-greedy action selection
             action = self._select_action_train(
                 static_features, dynamic_features, action_mask
             )
@@ -225,23 +227,20 @@ class Trainer:
 
             done, reward = self.env.step(action)
 
-            # Store transition (only pre-action timesteps)
-            # After the agent has acted, we still store "do nothing" transitions
-            # but only until the agent acts. The spec says "only pre-action timesteps".
-            # We collect ALL timesteps but mark appropriately.
-            next_obs = None
             next_dynamic = None
             next_mask = None
             if not done:
                 next_obs = self.env.get_observation()
                 next_dynamic = self.normalizer.encode_dynamic(next_obs)
                 next_mask = self.env.get_action_mask()
+            else:
+                final_reward = reward
 
             transitions.append({
                 "static_features": static_features,
                 "dynamic_features": dynamic_features,
                 "action": action,
-                "reward": reward if done else 0.0,
+                "reward": reward,  # 0.0 for non-terminal, P&L at terminal
                 "next_dynamic_features": next_dynamic,
                 "done": done,
                 "action_mask": action_mask,
@@ -249,62 +248,10 @@ class Trainer:
             })
 
             if done:
-                # Assign the final reward to the transition where the
-                # agent acted (if any), not to the terminal transition.
-                if reward != 0.0 and len(transitions) > 1:
-                    self._assign_reward_to_action_step(transitions, reward)
                 break
 
-        # Only store pre-action timesteps (up to and including the action)
-        pre_action_transitions = self._filter_pre_action(transitions)
-        self.replay_buffer.add_episode(pre_action_transitions)
-
-        final_reward = reward if done else 0.0
+        self.replay_buffer.add_episode(transitions)
         return final_reward, action_counts
-
-    def _assign_reward_to_action_step(
-        self, transitions: list[dict], final_reward: float
-    ) -> None:
-        """Move the terminal reward to the step where the agent acted.
-
-        In this environment, reward is only known at episode end, but
-        it logically belongs to the action step. We set intermediate
-        rewards to 0 and the action step's reward to the final reward.
-        For the last transition (terminal), set reward=0 since the
-        action step gets it.
-        """
-        # Find the step where a non-zero action was taken
-        action_idx = None
-        for i, t in enumerate(transitions):
-            if t["action"] != 0:
-                action_idx = i
-                break
-
-        if action_idx is not None:
-            # Clear terminal reward, assign to action step
-            transitions[-1]["reward"] = 0.0
-            transitions[action_idx]["reward"] = final_reward
-
-    def _filter_pre_action(self, transitions: list[dict]) -> list[dict]:
-        """Return only pre-action transitions (before and including the action).
-
-        Post-action forced "do nothing" steps are excluded from the buffer.
-        """
-        result = []
-        acted = False
-        for t in transitions:
-            if not acted:
-                result.append(t)
-                if t["action"] != 0:
-                    acted = True
-            # Skip post-action steps (except if no action was ever taken,
-            # include everything — the agent chose to do nothing throughout)
-
-        # If agent never acted, include all transitions
-        if not acted:
-            return transitions
-
-        return result
 
     def _select_action_train(
         self,
@@ -356,7 +303,7 @@ class Trainer:
         )  # (B, L, 37)
         dynamic = torch.tensor(
             batch["dynamic_features"], dtype=torch.float32, device=self.device
-        )  # (B, L, 11)
+        )  # (B, L, 12)
         actions = torch.tensor(
             batch["actions"], dtype=torch.int64, device=self.device
         )  # (B, L)
@@ -365,7 +312,7 @@ class Trainer:
         )  # (B, L)
         next_dynamic = torch.tensor(
             batch["next_dynamic_features"], dtype=torch.float32, device=self.device
-        )  # (B, L, 11)
+        )  # (B, L, 12)
         dones = torch.tensor(
             batch["dones"], dtype=torch.float32, device=self.device
         )  # (B, L)
@@ -500,6 +447,7 @@ class Trainer:
                 action = int(np.argmax(q_values))
 
                 done, reward = self.env.step(action)
+
                 if done:
                     total_profit += reward * 100.0  # Convert to cents
                     break

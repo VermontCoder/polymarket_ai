@@ -45,6 +45,7 @@ def _make_episode(outcome="UP", num_rows=5, rows=None, **kwargs):
 
 ALLOWED_ROW_FIELDS = {
     "up_bid", "up_ask", "down_bid", "down_ask", "diff_pct", "time_to_close",
+    "is_sell_mode",
 }
 
 ALLOWED_EPISODE_FIELDS = {
@@ -260,4 +261,4 @@ class TestNormalizerNoLeak:
         assert static.shape == (37,)
 
         dynamic = norm.encode_dynamic(_make_row())
-        assert dynamic.shape == (11,)
+        assert dynamic.shape == (12,)

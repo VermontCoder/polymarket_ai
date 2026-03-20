@@ -118,17 +118,17 @@ class PrioritizedReplayBuffer:
 
     Each transition dict must contain:
         static_features     np.array (35,)
-        dynamic_features    np.array (11,)
+        dynamic_features    np.array (12,)
         action              int
         reward              float
-        next_dynamic_features  np.array (11,) or None if terminal
+        next_dynamic_features  np.array (12,) or None if terminal
         done                bool
         action_mask         np.array (9,) bool
         next_action_mask    np.array (9,) bool or None if terminal
     """
 
     STATIC_DIM = 37
-    DYNAMIC_DIM = 11
+    DYNAMIC_DIM = 12
     NUM_ACTIONS = 9
 
     def __init__(
@@ -244,10 +244,10 @@ class PrioritizedReplayBuffer:
         Returns:
             dict with keys:
                 static_features:      (batch, seq_len, 35)
-                dynamic_features:     (batch, seq_len, 11)
+                dynamic_features:     (batch, seq_len, 12)
                 actions:              (batch, seq_len)
                 rewards:              (batch, seq_len)
-                next_dynamic_features:(batch, seq_len, 11)
+                next_dynamic_features:(batch, seq_len, 12)
                 dones:                (batch, seq_len)
                 action_masks:         (batch, seq_len, 9)
                 next_action_masks:    (batch, seq_len, 9)
