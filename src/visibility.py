@@ -125,10 +125,7 @@ def run_visibility(
         if normalizer is not None:
             static_features = normalizer.encode_static(episode)
 
-        episode_action = None
-        episode_action_price = None
-        is_maker_trade = False
-        locked = False
+        prev_trade_count = 0
 
         for step in range(env.num_rows):
             row = episode["rows"][step]
@@ -151,52 +148,51 @@ def run_visibility(
             down_ask = row.get("down_ask")
             diff_pct = row.get("diff_pct")
             time_to_close = row.get("time_to_close")
+            mode_str = "SELL" if obs.get("is_sell_mode") else "BUY "
 
             print(
-                f"Row {step:3d} | Time left: {_format_time_left(time_to_close)} | "
-                f"BTC diff: {_format_diff_pct(diff_pct)}"
+                f"Row {step:3d} | {_format_time_left(time_to_close)} | "
+                f"diff: {_format_diff_pct(diff_pct)} | Mode: {mode_str}"
             )
             print(
                 f"  UP:  bid={_format_price(up_bid)} ask={_format_price(up_ask)} | "
                 f"DOWN: bid={_format_price(down_bid)} ask={_format_price(down_ask)}"
             )
 
-            if locked:
-                if not is_maker_trade:
-                    print("  [Taker order executed - waiting for outcome]")
+            if action == 0:
+                print("  Action: DO NOTHING")
             else:
-                # Format action display
-                if action == 0:
-                    print("  Action: DO NOTHING")
-                else:
-                    price = _get_action_price(action, row)
-                    action_str = ACTION_NAMES[action].format(
-                        price=f"{price:.0f}" if price is not None else "?"
-                    )
-                    print(f"  Action: {action_str}")
-                    episode_action = action
-                    episode_action_price = price
-                    is_maker_trade = action in (5, 6, 7, 8)
-                    locked = True
-                    print("  >>> Agent locked in. Watching remaining rows...")
+                price = _get_action_price(action, row)
+                action_str = ACTION_NAMES[action].format(
+                    price=f"{price:.0f}" if price is not None else "?"
+                )
+                print(f"  Action: {action_str}")
+                if action in (5, 6, 7, 8):
+                    print("  [Limit order placed - scanning future rows...]")
 
             done, reward = env.step(action)
 
-            # Show limit order fill status after step (fill check runs inside step)
-            if locked and is_maker_trade:
-                trade_info = env.trade_info
-                if trade_info and trade_info["filled"]:
-                    print("  [Limit order FILLED]")
-                else:
-                    print("  [Limit order pending...]")
+            # Show any limit order fills that occurred on this step
+            new_trades = env.trades[prev_trade_count:]
+            for trade in new_trades:
+                if trade["is_maker"]:
+                    if trade["type"] == "buy":
+                        print(
+                            f"  *** LIMIT FILLED: Bought {trade['shares']:.2f} "
+                            f"{trade['direction']} shares @ {trade['price']:.0f}c ***"
+                        )
+                    else:
+                        print(
+                            f"  *** LIMIT FILLED: Sold {trade['shares']:.2f} "
+                            f"{trade['direction']} shares @ {trade['price']:.0f}c "
+                            f"-> proceeds={trade['proceeds']:.4f}c ***"
+                        )
+            prev_trade_count = len(env.trades)
 
             print("-" * 69)
 
             if done:
-                _print_episode_result(
-                    episode, reward, episode_action, episode_action_price,
-                    is_maker_trade, env.trade_info
-                )
+                _print_episode_result(episode, reward, env.trades)
                 cumulative_profit += reward * 100.0
                 print("=" * 69)
                 print(
@@ -211,55 +207,37 @@ def run_visibility(
 def _print_episode_result(
     episode: dict[str, Any],
     reward: float,
-    action: Optional[int],
-    trade_price: Optional[float],
-    is_maker: bool,
-    trade_info: Optional[dict],
+    trades: list[dict[str, Any]],
 ) -> None:
-    """Print the episode result summary."""
+    """Print the episode result summary using the completed trade list."""
     outcome = episode["outcome"]
     profit_cents = reward * 100.0
 
-    if action is None or action == 0:
-        print(f"Episode Result: {outcome} | No trade made")
+    if not trades:
+        print(f"Episode Result: {outcome} | No trades made")
         print(f"  Profit: 0.00c")
         return
 
-    # Determine fill status for maker orders
-    filled = True
-    if is_maker and trade_info is not None:
-        filled = trade_info["filled"]
+    print(f"Episode Result: {outcome} | {len(trades)} completed trade(s)")
 
-    if is_maker and not filled:
-        print(f"Episode Result: {outcome} | Limit order NOT filled")
-        print(f"  Profit: 0.00c")
-        return
+    for i, trade in enumerate(trades):
+        t_type = trade["type"].upper()
+        direction = trade["direction"]
+        price = trade["price"]
+        fee_type = "maker" if trade["is_maker"] else "taker"
 
-    # Calculate fee/rebate
-    if is_maker:
-        fee_val = maker_rebate(trade_price)
-        fee_label = "Rebate"
-        fee_sign = "+"
-    else:
-        fee_val = taker_fee(trade_price)
-        fee_label = "Fee"
-        fee_sign = "-"
+        if trade["type"] == "buy":
+            shares = trade["shares"]
+            print(
+                f"  Trade {i + 1}: {t_type} {direction} @ {price:.0f}c "
+                f"({fee_type}) -> {shares:.2f} shares"
+            )
+        else:
+            shares = trade["shares"]
+            proceeds = trade["proceeds"]
+            print(
+                f"  Trade {i + 1}: {t_type} {direction} @ {price:.0f}c "
+                f"({fee_type}), {shares:.2f} shares -> {proceeds:.4f}c"
+            )
 
-    is_buy = action in (1, 3, 5, 7)
-    is_up = action in (1, 2, 5, 6)
-    share = "UP" if is_up else "DOWN"
-
-    if is_buy:
-        payout = 100.0 if outcome == share else 0.0
-        print(
-            f"Episode Result: {outcome} | Payout: {payout:.0f}c | "
-            f"Cost: {trade_price:.0f}c | {fee_label}: {fee_sign}{fee_val:.4f}c"
-        )
-    else:
-        payout_owed = 100.0 if outcome == share else 0.0
-        print(
-            f"Episode Result: {outcome} | Received: {trade_price:.0f}c | "
-            f"Owed: {payout_owed:.0f}c | {fee_label}: {fee_sign}{fee_val:.4f}c"
-        )
-
-    print(f"  Profit: {profit_cents:+.2f}c")
+    print(f"  Profit: {profit_cents:+.2f}c (reward: {reward:.4f})")

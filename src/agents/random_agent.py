@@ -10,8 +10,8 @@ import numpy as np
 class RandomAgent:
     """Uniform random action selection from valid actions.
 
-    The agent makes at most one trade per episode. After acting,
-    the action mask restricts it to action 0 (do nothing).
+    Selects independently on every row. The environment's action mask
+    handles buy/sell mode restrictions (e.g. no buying while holding shares).
     """
 
     def select_action(self, action_mask: np.ndarray) -> int:
