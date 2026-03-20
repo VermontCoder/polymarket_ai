@@ -109,65 +109,74 @@ def compute_sell_proceeds(shares: float, price: float, is_maker: bool) -> float:
 
 def compute_action_mask(
     row: dict[str, Any],
-    has_acted: bool,
+    shares_owned: float,
+    share_direction: str = "",
+    pending_limit: dict | None = None,
 ) -> np.ndarray:
     """Build a boolean action mask (9 elements, True = allowed).
 
     Rules:
       1. Action 0 (do nothing) is always allowed.
-      2. If has_acted, only action 0 is allowed.
-      3. Null up_ask  -> mask actions 1, 5.
-      4. Null up_bid  -> mask actions 2, 6.
-      5. Null down_ask -> mask actions 3, 7.
-      6. Null down_bid -> mask actions 4, 8.
-      7. Limit order boundary: up_ask - 1 < 1 -> mask 5;
-                               up_bid + 1 > 99 -> mask 6.
-      8. Limit order boundary: down_ask - 1 < 1 -> mask 7;
-                               down_bid + 1 > 99 -> mask 8.
+      2. If pending_limit is set, only action 0 is allowed.
+      3. If shares_owned == 0 (buy mode):
+           - Sell actions (2, 4, 6, 8) are masked.
+           - Null up_ask -> mask 1, 5.
+           - Null down_ask -> mask 3, 7.
+           - Limit buy boundary (ask - 1 < 1): mask 5 or 7.
+      4. If shares_owned > 0 (sell mode):
+           - Buy actions (1, 3, 5, 7) are masked.
+           - If share_direction == "UP": mask 4, 8 (wrong direction sells).
+           - If share_direction == "DOWN": mask 2, 6 (wrong direction sells).
+           - Null up_bid -> mask 2, 6.
+           - Null down_bid -> mask 4, 8.
+           - Limit sell boundary (bid + 1 > 99): mask 6 or 8.
     """
     mask = np.ones(NUM_ACTIONS, dtype=bool)
 
-    # Rule 2: already acted
-    if has_acted:
+    # Rule 2: pending limit order — wait for fill or episode end
+    if pending_limit is not None:
         mask[1:] = False
         return mask
 
-    up_bid = row.get("up_bid")
-    up_ask = row.get("up_ask")
-    down_bid = row.get("down_bid")
-    down_ask = row.get("down_ask")
+    if shares_owned == 0.0:
+        # Buy mode: mask all sells
+        mask[2] = mask[4] = mask[6] = mask[8] = False
 
-    # Rule 3: null up_ask
-    if up_ask is None:
-        mask[1] = False
-        mask[5] = False
+        up_ask = row.get("up_ask")
+        down_ask = row.get("down_ask")
 
-    # Rule 4: null up_bid
-    if up_bid is None:
-        mask[2] = False
-        mask[6] = False
+        if up_ask is None:
+            mask[1] = mask[5] = False
+        elif up_ask - 1 < 1:
+            mask[5] = False
 
-    # Rule 5: null down_ask
-    if down_ask is None:
-        mask[3] = False
-        mask[7] = False
+        if down_ask is None:
+            mask[3] = mask[7] = False
+        elif down_ask - 1 < 1:
+            mask[7] = False
 
-    # Rule 6: null down_bid
-    if down_bid is None:
-        mask[4] = False
-        mask[8] = False
+    else:
+        # Sell mode: mask all buys
+        mask[1] = mask[3] = mask[5] = mask[7] = False
 
-    # Rule 7: limit order boundary for UP
-    if up_ask is not None and up_ask - 1 < 1:
-        mask[5] = False
-    if up_bid is not None and up_bid + 1 > 99:
-        mask[6] = False
+        # Mask sells for the wrong direction
+        if share_direction == "UP":
+            mask[4] = mask[8] = False  # can't sell DOWN shares
+        elif share_direction == "DOWN":
+            mask[2] = mask[6] = False  # can't sell UP shares
 
-    # Rule 8: limit order boundary for DOWN
-    if down_ask is not None and down_ask - 1 < 1:
-        mask[7] = False
-    if down_bid is not None and down_bid + 1 > 99:
-        mask[8] = False
+        up_bid = row.get("up_bid")
+        down_bid = row.get("down_bid")
+
+        if up_bid is None:
+            mask[2] = mask[6] = False
+        elif up_bid + 1 > 99:
+            mask[6] = False
+
+        if down_bid is None:
+            mask[4] = mask[8] = False
+        elif down_bid + 1 > 99:
+            mask[8] = False
 
     return mask
 

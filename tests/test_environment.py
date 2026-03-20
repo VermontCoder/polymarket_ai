@@ -154,112 +154,140 @@ class TestMakerRebate:
 # ---------------------------------------------------------------------------
 
 class TestActionMask:
-    """Action masking correctly blocks invalid actions."""
+    """Action masking: buy/sell mode, direction, pending limit, null, boundaries."""
 
-    def test_all_valid_normal_row(self):
-        """All actions allowed when all bid/ask present and not acted."""
-        row = _make_row()
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask.shape == (9,)
-        assert mask.all()  # All True
+    # --- Buy mode (shares_owned == 0) ---
 
-    def test_action0_always_allowed(self):
-        """Action 0 (do nothing) is always allowed, even after acting."""
+    def test_buy_mode_allows_buys_blocks_sells(self):
+        """In buy mode, sell actions 2/4/6/8 are always masked."""
         row = _make_row()
-        mask = compute_action_mask(row, has_acted=True)
+        mask = compute_action_mask(row, shares_owned=0.0)
         assert mask[0] is np.True_
+        assert mask[1] is np.True_   # buy UP taker
+        assert mask[2] is np.False_  # sell UP taker
+        assert mask[3] is np.True_   # buy DOWN taker
+        assert mask[4] is np.False_  # sell DOWN taker
+        assert mask[5] is np.True_   # limit buy UP
+        assert mask[6] is np.False_  # limit sell UP
+        assert mask[7] is np.True_   # limit buy DOWN
+        assert mask[8] is np.False_  # limit sell DOWN
 
-    def test_has_acted_blocks_all_except_0(self):
-        """After acting, only action 0 is allowed."""
-        row = _make_row()
-        mask = compute_action_mask(row, has_acted=True)
+    def test_buy_mode_null_up_ask_masks_1_and_5(self):
+        """Buy mode: null up_ask blocks actions 1 and 5."""
+        row = _make_row(up_ask=None)
+        mask = compute_action_mask(row, shares_owned=0.0)
+        assert mask[1] is np.False_
+        assert mask[5] is np.False_
+        assert mask[3] is np.True_   # down buy still OK
+        assert mask[7] is np.True_
+
+    def test_buy_mode_null_down_ask_masks_3_and_7(self):
+        """Buy mode: null down_ask blocks actions 3 and 7."""
+        row = _make_row(down_ask=None)
+        mask = compute_action_mask(row, shares_owned=0.0)
+        assert mask[3] is np.False_
+        assert mask[7] is np.False_
+        assert mask[1] is np.True_
+
+    def test_buy_mode_limit_buy_boundary_low(self):
+        """Buy mode: limit buy UP masked when up_ask - 1 < 1."""
+        row = _make_row(up_ask=1.0)
+        mask = compute_action_mask(row, shares_owned=0.0)
+        assert mask[5] is np.False_
+        assert mask[1] is np.True_   # taker buy still OK
+
+    def test_buy_mode_limit_buy_down_boundary_low(self):
+        """Buy mode: limit buy DOWN masked when down_ask - 1 < 1."""
+        row = _make_row(down_ask=1.0)
+        mask = compute_action_mask(row, shares_owned=0.0)
+        assert mask[7] is np.False_
+        assert mask[3] is np.True_
+
+    def test_buy_mode_all_null_only_action0(self):
+        """Buy mode: all bid/ask null -> only action 0."""
+        row = _make_row(up_bid=None, up_ask=None, down_bid=None, down_ask=None)
+        mask = compute_action_mask(row, shares_owned=0.0)
         assert mask[0] is np.True_
         for i in range(1, 9):
             assert mask[i] is np.False_
 
-    def test_null_up_ask_masks_1_and_5(self):
-        """Null up_ask blocks actions 1 (buy UP taker) and 5 (limit buy UP)."""
-        row = _make_row(up_ask=None)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[1] is np.False_
-        assert mask[5] is np.False_
-        # Others should still be available
-        assert mask[0] is np.True_
-        assert mask[2] is np.True_
-        assert mask[3] is np.True_
-        assert mask[4] is np.True_
+    # --- Sell mode (shares_owned > 0) ---
 
-    def test_null_up_bid_masks_2_and_6(self):
-        """Null up_bid blocks actions 2 (sell UP taker) and 6 (limit sell UP)."""
-        row = _make_row(up_bid=None)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[2] is np.False_
-        assert mask[6] is np.False_
+    def test_sell_mode_up_allows_up_sells_blocks_everything_else(self):
+        """Sell mode UP: only actions 0, 2 (taker sell UP), 6 (limit sell UP) can be unmasked."""
+        row = _make_row()
+        mask = compute_action_mask(row, shares_owned=4.99, share_direction="UP")
         assert mask[0] is np.True_
-        assert mask[1] is np.True_
-
-    def test_null_down_ask_masks_3_and_7(self):
-        """Null down_ask blocks actions 3 and 7."""
-        row = _make_row(down_ask=None)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[3] is np.False_
-        assert mask[7] is np.False_
-        assert mask[0] is np.True_
-
-    def test_null_down_bid_masks_4_and_8(self):
-        """Null down_bid blocks actions 4 and 8."""
-        row = _make_row(down_bid=None)
-        mask = compute_action_mask(row, has_acted=False)
+        assert mask[2] is np.True_   # sell UP taker
+        assert mask[6] is np.True_   # limit sell UP
+        # All buys masked
+        for buy_action in [1, 3, 5, 7]:
+            assert mask[buy_action] is np.False_
+        # DOWN sells also masked (wrong direction)
         assert mask[4] is np.False_
         assert mask[8] is np.False_
 
-    def test_all_null_only_action0(self):
-        """When all bid/ask are null, only action 0 is allowed."""
-        row = _make_row(up_bid=None, up_ask=None, down_bid=None, down_ask=None)
-        mask = compute_action_mask(row, has_acted=False)
+    def test_sell_mode_down_allows_down_sells_blocks_everything_else(self):
+        """Sell mode DOWN: only actions 0, 4 (taker sell DOWN), 8 (limit sell DOWN) can be unmasked."""
+        row = _make_row()
+        mask = compute_action_mask(row, shares_owned=4.99, share_direction="DOWN")
+        assert mask[0] is np.True_
+        assert mask[4] is np.True_   # sell DOWN taker
+        assert mask[8] is np.True_   # limit sell DOWN
+        for buy_action in [1, 3, 5, 7]:
+            assert mask[buy_action] is np.False_
+        assert mask[2] is np.False_
+        assert mask[6] is np.False_
+
+    def test_sell_mode_null_up_bid_masks_sell_up(self):
+        """Sell mode UP: null up_bid masks sell UP actions 2 and 6."""
+        row = _make_row(up_bid=None)
+        mask = compute_action_mask(row, shares_owned=4.99, share_direction="UP")
+        assert mask[2] is np.False_
+        assert mask[6] is np.False_
+
+    def test_sell_mode_null_down_bid_masks_sell_down(self):
+        """Sell mode DOWN: null down_bid masks sell DOWN actions 4 and 8."""
+        row = _make_row(down_bid=None)
+        mask = compute_action_mask(row, shares_owned=4.99, share_direction="DOWN")
+        assert mask[4] is np.False_
+        assert mask[8] is np.False_
+
+    def test_sell_mode_limit_sell_up_boundary_high(self):
+        """Sell mode UP: limit sell UP masked when up_bid + 1 > 99."""
+        row = _make_row(up_bid=99.0)
+        mask = compute_action_mask(row, shares_owned=4.99, share_direction="UP")
+        assert mask[6] is np.False_
+        assert mask[2] is np.True_   # taker sell still OK
+
+    def test_sell_mode_limit_sell_down_boundary_high(self):
+        """Sell mode DOWN: limit sell DOWN masked when down_bid + 1 > 99."""
+        row = _make_row(down_bid=99.0)
+        mask = compute_action_mask(row, shares_owned=4.99, share_direction="DOWN")
+        assert mask[8] is np.False_
+        assert mask[4] is np.True_
+
+    # --- Pending limit ---
+
+    def test_pending_limit_blocks_all_except_0(self):
+        """Pending limit order -> only action 0 allowed."""
+        row = _make_row()
+        pending = {"action": 5, "price": 55.0, "market": "UP", "order_type": "buy", "placed_at_step": 0}
+        mask = compute_action_mask(row, shares_owned=0.0, pending_limit=pending)
         assert mask[0] is np.True_
         for i in range(1, 9):
             assert mask[i] is np.False_
 
-    def test_limit_buy_up_boundary_low(self):
-        """Limit buy UP masked when up_ask - 1 < 1 (i.e., up_ask <= 1)."""
-        row = _make_row(up_ask=1.0)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[5] is np.False_  # limit buy UP masked
-        assert mask[1] is np.True_   # taker buy UP still OK
-
-    def test_limit_sell_up_boundary_high(self):
-        """Limit sell UP masked when up_bid + 1 > 99 (i.e., up_bid >= 99)."""
-        row = _make_row(up_bid=99.0)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[6] is np.False_  # limit sell UP masked
-        assert mask[2] is np.True_   # taker sell UP still OK
-
-    def test_limit_buy_down_boundary_low(self):
-        """Limit buy DOWN masked when down_ask - 1 < 1."""
-        row = _make_row(down_ask=1.0)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[7] is np.False_  # limit buy DOWN masked
-        assert mask[3] is np.True_   # taker buy DOWN still OK
-
-    def test_limit_sell_down_boundary_high(self):
-        """Limit sell DOWN masked when down_bid + 1 > 99."""
-        row = _make_row(down_bid=99.0)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[8] is np.False_  # limit sell DOWN masked
-        assert mask[4] is np.True_   # taker sell DOWN still OK
-
-    def test_limit_buy_up_boundary_ok(self):
-        """Limit buy UP is allowed when up_ask - 1 >= 1 (e.g., up_ask = 2)."""
-        row = _make_row(up_ask=2.0)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[5] is np.True_
-
-    def test_limit_sell_up_boundary_ok(self):
-        """Limit sell UP is allowed when up_bid + 1 <= 99 (e.g., up_bid = 98)."""
-        row = _make_row(up_bid=98.0)
-        mask = compute_action_mask(row, has_acted=False)
-        assert mask[6] is np.True_
+    def test_action0_always_allowed(self):
+        """Action 0 is always allowed regardless of mode."""
+        row = _make_row()
+        # buy mode
+        assert compute_action_mask(row, shares_owned=0.0)[0] is np.True_
+        # sell mode
+        assert compute_action_mask(row, shares_owned=4.99, share_direction="UP")[0] is np.True_
+        # pending limit
+        pending = {"action": 5, "price": 55.0, "market": "UP", "order_type": "buy", "placed_at_step": 0}
+        assert compute_action_mask(row, shares_owned=0.0, pending_limit=pending)[0] is np.True_
 
 
 # ---------------------------------------------------------------------------
