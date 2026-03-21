@@ -1,20 +1,24 @@
 """Evaluation / visibility mode entry point for Polymarket BTC RL trading agent.
 
 Usage:
-    # Random agent on all episodes
-    python evaluate.py --data data/episodes.json --player random
+    # Random agent on all episodes (auto-detects JSON in data/)
+    python evaluate.py --player random
 
     # Random agent on specific episode count
-    python evaluate.py --data data/episodes.json --player random --num-episodes 10
+    python evaluate.py --player random --num-episodes 10
 
     # Trained agent with checkpoint
-    python evaluate.py --data data/episodes.json --player dqn --checkpoint checkpoints/model.pt
+    python evaluate.py --player dqn --checkpoint checkpoints/model.pt
+
+    # Explicit data file
+    python evaluate.py --data data/episodes.json --player random
 
     # Specific episode indices
-    python evaluate.py --data data/episodes.json --player random --episode-ids 0 5 10
+    python evaluate.py --player random --episode-ids 0 5 10
 """
 
 import argparse
+import glob
 import random
 
 import torch
@@ -31,8 +35,8 @@ def parse_args():
         description="Evaluate RL agent with console visibility"
     )
     parser.add_argument(
-        "--data", type=str, required=True,
-        help="Path to JSON episodes file",
+        "--data", type=str, default=None,
+        help="Path to JSON episodes file (default: first JSON found in data/)",
     )
     parser.add_argument(
         "--player", type=str, default="random", choices=["random", "dqn"],
@@ -68,8 +72,15 @@ def parse_args():
 def main():
     args = parse_args()
 
-    print(f"Loading episodes from {args.data}...")
-    episodes = load_episodes(args.data)
+    data_path = args.data
+    if data_path is None:
+        files = glob.glob("data/*.json")
+        if not files:
+            raise FileNotFoundError("No JSON files found in data/ and --data not specified")
+        data_path = files[0]
+
+    print(f"Loading episodes from {data_path}...")
+    episodes = load_episodes(data_path)
     print(f"Loaded {len(episodes)} episodes")
 
     # Select split

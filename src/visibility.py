@@ -8,7 +8,10 @@ from typing import Any, Optional
 
 import numpy as np
 
-from src.environment import Environment, taker_fee, maker_rebate, NUM_ACTIONS
+from src.environment import (
+    Environment, taker_fee, maker_rebate, NUM_ACTIONS,
+    SHARES_PER_BUY, REWARD_NORMALIZATION,
+)
 from src.normalizer import Normalizer
 from src.agents.random_agent import RandomAgent
 from src.agents.dqn_agent import DQNAgent
@@ -172,28 +175,35 @@ def run_visibility(
 
             done, reward = env.step(action)
 
-            # Show any limit order fills that occurred on this step
+            # Show cash flow for any trades that settled this step
             new_trades = env.trades[prev_trade_count:]
             for trade in new_trades:
+                cash_out = SHARES_PER_BUY * trade["price"]
                 if trade["is_maker"]:
                     if trade["type"] == "buy":
                         print(
                             f"  *** LIMIT FILLED: Bought {trade['shares']:.2f} "
-                            f"{trade['direction']} shares @ {trade['price']:.0f}c ***"
+                            f"{trade['direction']} shares @ {trade['price']:.0f}c "
+                            f"(paid: {cash_out:.2f}c) ***"
                         )
                     else:
                         print(
                             f"  *** LIMIT FILLED: Sold {trade['shares']:.2f} "
                             f"{trade['direction']} shares @ {trade['price']:.0f}c "
-                            f"-> proceeds={trade['proceeds']:.4f}c ***"
+                            f"-> {trade['proceeds']:.2f}c received ***"
                         )
+                else:
+                    if trade["type"] == "buy":
+                        print(f"  [Cash out: {cash_out:.2f}c | {trade['shares']:.2f} shares acquired]")
+                    else:
+                        print(f"  [Cash in: {trade['proceeds']:.2f}c received]")
             prev_trade_count = len(env.trades)
 
             print("-" * 69)
 
             if done:
-                _print_episode_result(episode, reward, env.trades)
-                cumulative_profit += reward * 100.0
+                _print_episode_result(episode, reward, env.trades, env)
+                cumulative_profit += reward * REWARD_NORMALIZATION
                 print("=" * 69)
                 print(
                     f"Cumulative: Episodes={ep_idx + 1} | "
@@ -208,36 +218,51 @@ def _print_episode_result(
     episode: dict[str, Any],
     reward: float,
     trades: list[dict[str, Any]],
+    env: Environment,
 ) -> None:
     """Print the episode result summary using the completed trade list."""
     outcome = episode["outcome"]
-    profit_cents = reward * 100.0
+    profit_cents = reward * REWARD_NORMALIZATION
 
-    if not trades:
+    shares_held = env.shares_owned
+    held_note = " + shares held to end" if shares_held > 0 else ""
+
+    if not trades and shares_held == 0:
         print(f"Episode Result: {outcome} | No trades made")
         print(f"  Profit: 0.00c")
         return
 
-    print(f"Episode Result: {outcome} | {len(trades)} completed trade(s)")
+    print(f"Episode Result: {outcome} | {len(trades)} completed trade(s){held_note}")
 
     for i, trade in enumerate(trades):
         t_type = trade["type"].upper()
         direction = trade["direction"]
         price = trade["price"]
         fee_type = "maker" if trade["is_maker"] else "taker"
+        cash_out = SHARES_PER_BUY * price
 
         if trade["type"] == "buy":
             shares = trade["shares"]
             print(
                 f"  Trade {i + 1}: {t_type} {direction} @ {price:.0f}c "
-                f"({fee_type}) -> {shares:.2f} shares"
+                f"({fee_type}) -> {shares:.2f} shares (paid: {cash_out:.2f}c)"
             )
         else:
             shares = trade["shares"]
             proceeds = trade["proceeds"]
             print(
                 f"  Trade {i + 1}: {t_type} {direction} @ {price:.0f}c "
-                f"({fee_type}), {shares:.2f} shares -> {proceeds:.4f}c"
+                f"({fee_type}), {shares:.2f} shares -> {proceeds:.2f}c received"
             )
+
+    # End-of-episode payout for shares still held
+    if shares_held > 0:
+        held_dir = trades[-1]["direction"] if trades else ""
+        payout = shares_held * 100.0 if outcome == held_dir else 0.0
+        match_str = "MATCH" if outcome == held_dir else "LOSS"
+        print(
+            f"  End-of-episode: Held {shares_held:.2f} {held_dir} shares "
+            f"-> [{match_str}] {outcome} wins, payout = {payout:.2f}c"
+        )
 
     print(f"  Profit: {profit_cents:+.2f}c (reward: {reward:.4f})")

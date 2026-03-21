@@ -65,24 +65,20 @@ class TestRandomAgent:
         for _ in range(50):
             assert agent.select_action(mask) == 0
 
-    def test_at_most_one_action_per_episode(self):
-        """Random agent takes at most 1 non-zero action per episode."""
+    def test_never_violates_action_mask_through_full_episode(self):
+        """Random agent never selects a masked action through an entire episode."""
         agent = RandomAgent()
         env = Environment()
-        ep = _make_episode(num_rows=10, outcome="UP")
+        ep = _make_episode(num_rows=20, outcome="UP")
         env.reset(ep)
 
-        non_zero_actions = 0
         for _ in range(env.num_rows):
             mask = env.get_action_mask()
             action = agent.select_action(mask)
-            if action != 0:
-                non_zero_actions += 1
+            assert mask[action], f"Selected masked action {action} (mask={mask})"
             done, _ = env.step(action)
             if done:
                 break
-
-        assert non_zero_actions <= 1
 
     def test_handles_all_actions_valid(self):
         """Random agent works when all actions are valid."""

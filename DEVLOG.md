@@ -145,6 +145,36 @@ Host polymarket_dev
 
 ---
 
+## Session: 2026-03-20 — Trading Mechanics Overhaul (Complete)
+
+All 8 tasks from `docs/superpowers/plans/2026-03-20-trading-mechanics-overhaul.md` were executed and committed. 251 tests pass.
+
+### What Changed
+
+| File | Change |
+|------|--------|
+| `src/environment.py` | Deleted `compute_reward()` and `skip_to_end()`. Replaced single-trade `has_acted` state with multi-trade `shares_owned / share_direction / net_cash / pending_limit`. `get_observation()` now appends `is_sell_mode`. Reward = `(net_cash + end_payout) / 500`. |
+| `src/normalizer.py` | `DYNAMIC_DIM` 11→12. Added `is_sell_mode` at dim 11 in `encode_dynamic()`. |
+| `src/replay_buffer.py` | `DYNAMIC_DIM` 11→12. |
+| `src/trainer.py` | Removed `skip_to_end()` from `evaluate()`. `_run_episode()` now processes all rows (no early termination). Deleted `_assign_reward_to_action_step()` and `_filter_pre_action()`. |
+| `src/models/lstm_dqn.py` | Default `dynamic_dim` 11→12. |
+| `src/models/stacked_dqn.py` | Default `dynamic_dim` 11→12. |
+| `src/visibility.py` | Removed early termination. All rows processed. Per-trade display inline (shares, price, fee type). Limit order fills announced when they happen. Episode summary shows all completed trades. |
+| `src/agents/random_agent.py` | Updated docstring to reflect multi-trade mechanics. |
+| `tests/test_trainer.py` | Replaced old early-termination tests with `TestRunEpisodeAllRows` + `TestEvaluateAllRows`. |
+| `tests/test_*` | All `11` dimension references updated to `12`. `ALLOWED_ROW_FIELDS` in `test_anti_cheat.py` now includes `is_sell_mode`. |
+
+### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `7cd563c` | Environment class rewrite + test suite |
+| `d4dfad9` | Normalizer DYNAMIC_DIM 11→12, is_sell_mode |
+| `a4ee212` | trainer/replay_buffer/models all-rows processing + DYNAMIC_DIM propagation |
+| `d7670cf` | visibility.py per-trade display + random_agent docstring |
+
+---
+
 ## Major discovery as of 3/20/2026. 
 
 Polymarket does not allow selling before the acquisition of shares. So the code needs to be modified such that you cannot sell shares unless you've bought them previously in the episode. Also, since now you can only sell if you've bought, we are going to remove the restriction that you can only take one action per episode. That would limit us to only buying, which maybe isn't the best restriction.
