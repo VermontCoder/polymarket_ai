@@ -54,7 +54,7 @@ class GridDisplay:
             show_lines=False,
         )
         table.add_column("LR", style="cyan", no_wrap=True)
-        table.add_column("ε-decay", justify="right")
+        table.add_column("eps-decay", justify="right")
         table.add_column("seq", justify="right")
         table.add_column("hidden", justify="right")
         table.add_column("Status", justify="center")
@@ -101,7 +101,7 @@ class GridDisplay:
     def _status_text(status: str) -> Text:
         if status == "Running":
             return Text(status, style="bold yellow")
-        if status == "Done ✓":
+        if status == "Done [OK]":
             return Text(status, style="bold green")
         return Text(status, style="dim")
 
@@ -135,7 +135,7 @@ class GridDisplay:
                 state["episode"] = None
                 state["val_profit"] = None
             elif event == "config_done":
-                state["status"] = "Done ✓"
+                state["status"] = "Done [OK]"
                 state["val_profit"] = None
                 state["median"] = msg["median"]
                 if state["total_seeds"] is not None:

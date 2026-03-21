@@ -108,7 +108,7 @@ def test_grid_display_update_config_done():
     key = config_key(configs[0])
     display.update({"key": key, "event": "config_done",
                     "median": 388.0, "seed_profits": [294.5, 387.9, 485.0]})
-    assert display._states[key]["status"] == "Done ✓"
+    assert display._states[key]["status"] == "Done [OK]"
     assert display._states[key]["median"] == 388.0
     assert display._done_count == 6  # was 5, incremented by 1
 
