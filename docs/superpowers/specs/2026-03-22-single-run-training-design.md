@@ -47,7 +47,12 @@ One round = `val_every_episodes` total episodes (default 50), regardless of GPU 
 ## Checkpoint & Resume
 
 ### Saving
-Checkpoint written after every round (post-validation, post-log-append) to `<checkpoint-dir>/checkpoint.pt` (single file, overwritten each round). Contains:
+Two checkpoint files are maintained in `<checkpoint-dir>`:
+
+- `checkpoint.pt` — overwritten after every round (post-validation, post-log-append). Used for resuming.
+- `checkpoint_best.pt` — overwritten only when a new best validation profit is achieved. Used for rollback if performance degrades.
+
+Both contain:
 - Model weights
 - Optimizer state
 - Replay buffer state
