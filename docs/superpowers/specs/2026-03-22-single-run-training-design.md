@@ -84,7 +84,7 @@ Updated at the end of every round (every 50 episodes by default). Three panels r
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Panel 2 — Validation History (newest at bottom, scrolling)
+### Panel 2 — Validation History (fixed 10 rows, newest at bottom, oldest scroll off top)
 ```
 ┌─ Validation History ───────────────────────────────────────────────────────┐
 │  #    Episode   Val Profit   Best Profit   Median     ε                    │
