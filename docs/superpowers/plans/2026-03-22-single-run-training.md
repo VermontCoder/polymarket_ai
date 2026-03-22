@@ -763,6 +763,7 @@ class TestTrainDisplay:
             episode=50, val_profit=10.0, best_profit=10.0,
             median_profit=10.0, epsilon=0.9,
             action_distribution=self._DIST, checkpoint_num=1,
+            is_new_best=True,
         )
         assert len(display._history) == 1
 
@@ -773,8 +774,9 @@ class TestTrainDisplay:
                 episode=(i+1)*50, val_profit=float(i), best_profit=float(i),
                 median_profit=float(i), epsilon=0.9,
                 action_distribution=self._DIST, checkpoint_num=i+1,
+                is_new_best=False,
             )
-        assert len(display._history) <= 10
+        assert len(display._history) == 10
 
     def test_render_returns_renderable(self):
         from rich.console import ConsoleRenderable
@@ -885,8 +887,16 @@ class TrainDisplay:
         epsilon: float,
         action_distribution: dict[str, float],
         checkpoint_num: int,
+        is_new_best: bool = False,
     ) -> None:
-        """Refresh display with latest validation results."""
+        """Refresh display with latest validation results.
+
+        Args:
+            is_new_best: True if this checkpoint set a new best profit.
+                         Passed explicitly from the coordinator to avoid
+                         ambiguity (best_profit is already updated by the
+                         time update() is called).
+        """
         # Compute speed (eps/sec) since last update
         now = datetime.now()
         dt = (now - self._last_update_time).total_seconds()
@@ -898,7 +908,6 @@ class TrainDisplay:
         self._episode_count = episode
         self._epsilon = epsilon
         self._latest_dist = action_distribution
-        is_best = val_profit > best_profit or (val_profit == best_profit and not self._history)
         self._history.append({
             "checkpoint": checkpoint_num,
             "episode": episode,
@@ -906,7 +915,7 @@ class TrainDisplay:
             "best_profit": best_profit,
             "median_profit": median_profit,
             "epsilon": epsilon,
-            "is_best": is_best,
+            "is_best": is_new_best,
         })
         # Cap history to _MAX_HISTORY_ROWS
         if len(self._history) > _MAX_HISTORY_ROWS:
@@ -1199,7 +1208,7 @@ parser.add_argument(
 )
 ```
 
-Also remove `--log-dir` and `--save-path` from the parser — they are replaced by `--checkpoint-dir` for single-run mode. Grid search still uses a hardcoded path.
+Remove `--log-dir` from the parser — TensorBoard is gone. Keep `--save-path` because `main()` passes it to `grid_search()` and removing it would break that path. The single-run mode uses `--checkpoint-dir` instead.
 
 - [ ] **Step 2: Add `_handle_checkpoint_startup()` helper**
 
@@ -1280,6 +1289,8 @@ def run_training_session(
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = LSTMDQN(lstm_hidden_size=config.get("lstm_hidden", 32))
+    # Note: Trainer uses "epsilon_decay_episodes" but the CLI arg is "epsilon_decay".
+    # Map explicitly here so the CLI arg takes effect.
     trainer = Trainer(
         model=model,
         normalizer=normalizer,
@@ -1423,6 +1434,7 @@ def run_training_session(
                     epsilon=trainer.epsilon,
                     action_distribution=action_dist,
                     checkpoint_num=checkpoint_num,
+                    is_new_best=is_new_best,
                 )
 
                 # Append log entry
