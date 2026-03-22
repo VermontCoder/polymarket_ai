@@ -69,7 +69,7 @@ def parse_args():
 
 def train_single(
     train_eps, val_eps, test_eps, config, seed, save_path, log_dir=None,
-    on_validation=None,
+    on_validation=None, device=None,
 ):
     """Train a single configuration and return validation profit."""
     torch.manual_seed(seed)
@@ -82,7 +82,7 @@ def train_single(
         lstm_hidden_size=config.get("lstm_hidden", 32),
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on {device} | Config: {config} | Seed: {seed}")
 
     trainer = Trainer(
@@ -154,6 +154,7 @@ def run_config_worker(
     val_eps: list,
     test_eps: list,
     status_queue=None,
+    worker_id: int = 0,
 ) -> tuple:
     """Worker function for parallel grid search.
 
@@ -171,6 +172,7 @@ def run_config_worker(
         val_eps: Validation episodes.
         test_eps: Test episodes.
         status_queue: Optional queue for pushing status events to the parent.
+        worker_id: Worker index for GPU assignment (round-robin across available GPUs).
 
     Returns:
         Tuple of (config_key, seed_profits, median_val_profit).
@@ -181,6 +183,11 @@ def run_config_worker(
     key = _config_key(config)
     seed_profits = []
     total_seeds = len(seeds)
+
+    # Assign GPU round-robin across available GPUs
+    num_gpus = torch.cuda.device_count()
+    gpu_id = worker_id % num_gpus if num_gpus > 0 else None
+    device = torch.device(f"cuda:{gpu_id}" if gpu_id is not None else "cpu")
 
     # Suppress stdout in workers so the Rich display in the parent isn't corrupted.
     # stderr is left alone so tracebacks remain visible.
@@ -227,6 +234,7 @@ def run_config_worker(
                 save_path=temp_path,
                 log_dir=log_dir,
                 on_validation=on_validation,
+                device=device,
             )
             seed_profits.append(val_profit)
 
@@ -266,6 +274,14 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
     import multiprocessing
     import threading
     from src.grid_display import GridDisplay
+
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    # This must be done before creating any ProcessPoolExecutor
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        # Start method already set, ignore
+        pass
 
     if seeds is None:
         seeds = [42, 123, 456, 789, 999]
@@ -314,9 +330,9 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
                 future_to_config = {
                     executor.submit(
                         run_config_worker,
-                        config, seeds, train_eps, val_eps, test_eps, status_queue,
+                        config, seeds, train_eps, val_eps, test_eps, status_queue, worker_id,
                     ): config
-                    for config in pending
+                    for worker_id, config in enumerate(pending)
                 }
 
                 for future in concurrent.futures.as_completed(future_to_config):

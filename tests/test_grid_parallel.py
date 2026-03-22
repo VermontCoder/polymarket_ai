@@ -45,8 +45,50 @@ def test_run_config_worker_returns_tuple():
     assert isinstance(seed_profits[0], float)
 
 
-def test_run_config_worker_key_matches_config():
-    """Worker returns the correct config key."""
+def test_run_config_worker_gpu_assignment():
+    """Worker assigns GPUs round-robin based on worker_id."""
+    from train import run_config_worker
+    from unittest.mock import patch
+
+    eps = make_fake_episodes(20)
+    config = {"lr": 1e-4, "epsilon_decay": 150, "seq_len": 10, "lstm_hidden": 16, "epochs": 1}
+    seeds = [42]
+
+    # Mock torch.cuda.device_count to return 4 GPUs
+    with patch('torch.cuda.device_count', return_value=4):
+        # Test worker_id 0 -> GPU 0
+        with patch('train.train_single') as mock_train:
+            mock_train.return_value = 100.0
+            run_config_worker(config, seeds, eps, eps, eps, worker_id=0)
+            # Check that train_single was called with cuda:0
+            call_args = mock_train.call_args
+            device_arg = call_args.kwargs.get('device')
+            assert str(device_arg) == 'cuda:0'
+
+        # Test worker_id 3 -> GPU 3
+        with patch('train.train_single') as mock_train:
+            mock_train.return_value = 100.0
+            run_config_worker(config, seeds, eps, eps, eps, worker_id=3)
+            call_args = mock_train.call_args
+            device_arg = call_args.kwargs.get('device')
+            assert str(device_arg) == 'cuda:3'
+
+        # Test worker_id 4 -> GPU 0 (wrap around)
+        with patch('train.train_single') as mock_train:
+            mock_train.return_value = 100.0
+            run_config_worker(config, seeds, eps, eps, eps, worker_id=4)
+            call_args = mock_train.call_args
+            device_arg = call_args.kwargs.get('device')
+            assert str(device_arg) == 'cuda:0'
+
+    # Test no GPUs available -> CPU
+    with patch('torch.cuda.device_count', return_value=0):
+        with patch('train.train_single') as mock_train:
+            mock_train.return_value = 100.0
+            run_config_worker(config, seeds, eps, eps, eps, worker_id=0)
+            call_args = mock_train.call_args
+            device_arg = call_args.kwargs.get('device')
+            assert str(device_arg) == 'cpu'
     from train import run_config_worker, _config_key
 
     eps = make_fake_episodes(20)
