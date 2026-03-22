@@ -178,7 +178,7 @@ python train.py \
 | `train.py` | Modified | CLI entry point; parallel rollout loop; checkpoint startup logic; time cap |
 | `src/trainer.py` | Modified | Remove TensorBoard; expose `collect_episodes(device)` and `train_steps()` separately; add `save_checkpoint()` / `load_checkpoint()` |
 | `src/train_display.py` | New | Rich Live display — three-panel layout, updated each validation round |
-| `src/train_logger.py` | New | Appends JSON entries to `train_log.json` |
+| `src/train_logger.py` | New | Appends JSON entries to `train_log.jsonl` |
 | `src/rollout_worker.py` | New | Subprocess worker: receives model weights, runs episodes, returns experiences |
 | `src/grid_display.py` | Unchanged | Grid search display (untouched) |
 
