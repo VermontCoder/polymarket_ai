@@ -32,7 +32,7 @@ One round = `val_every_episodes` total episodes (default 50), regardless of GPU 
 
 - **N GPUs:** N rollout workers, each on their own GPU. Coordinator also on GPU 0.
 - **1 GPU:** Single worker and coordinator both on GPU 0. No parallelism, but identical code path — suitable for testing.
-- **CPU only:** Single-process mode, no worker subprocess. Falls back to current `train_single` behaviour.
+- **CPU only:** Single-process mode — no worker subprocess. The coordinator runs the same round loop directly on CPU, calling `collect_episodes` and `train_steps` inline without spawning workers. The old `train_single` function is removed.
 
 ---
 
@@ -47,7 +47,7 @@ One round = `val_every_episodes` total episodes (default 50), regardless of GPU 
 ## Checkpoint & Resume
 
 ### Saving
-Checkpoint written after every round (post-validation, post-log-append). Contains:
+Checkpoint written after every round (post-validation, post-log-append) to `<checkpoint-dir>/checkpoint.pt` (single file, overwritten each round). Contains:
 - Model weights
 - Optimizer state
 - Replay buffer state
@@ -106,9 +106,9 @@ Rows where a new best profit is achieved are highlighted.
 
 ## JSON Training Log
 
-File: `<checkpoint-dir>/train_log.json`
+File: `<checkpoint-dir>/train_log.jsonl` (newline-delimited JSON)
 
-One entry appended per validation checkpoint. New entries are appended on resume — the log is never overwritten.
+One entry appended per validation checkpoint. Each line is a self-contained JSON object. New entries are appended on resume — existing lines are never modified or deleted. This format handles appends trivially without read-modify-write.
 
 ```json
 {
