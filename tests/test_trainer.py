@@ -279,3 +279,39 @@ class TestEvaluateWithActions:
         profit_plain = trainer.evaluate([ep])
 
         assert profit_with_actions == pytest.approx(profit_plain)
+
+
+class TestFullCheckpoint:
+    def test_roundtrip_episode_count(self, tmp_path):
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _make_trainer(model, [ep])
+        trainer._episode_count = 42
+        trainer._best_val_profit = 99.0
+        trainer._val_profits_history = [10.0, 20.0, 99.0]
+
+        path = str(tmp_path / "full.pt")
+        elapsed = trainer.save_full_checkpoint(path, elapsed_seconds=500.0)
+
+        model2 = CountingModel(forced_action=0)
+        trainer2 = _make_trainer(model2, [ep])
+        returned_elapsed = trainer2.load_full_checkpoint(path)
+
+        assert trainer2._episode_count == 42
+        assert trainer2._best_val_profit == pytest.approx(99.0)
+        assert trainer2._val_profits_history == [10.0, 20.0, 99.0]
+        assert returned_elapsed == pytest.approx(500.0)
+
+    def test_save_checkpoint_still_works(self, tmp_path):
+        """Existing save_checkpoint (weights-only) must not break."""
+        rows = [_make_row() for _ in range(3)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _make_trainer(model, [ep])
+
+        path = str(tmp_path / "model.pt")
+        trainer.save_checkpoint(path)
+
+        import os
+        assert os.path.exists(path)

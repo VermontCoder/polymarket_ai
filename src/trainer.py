@@ -599,3 +599,47 @@ class Trainer:
     def save_checkpoint(self, path: str) -> None:
         """Save online network state dict."""
         torch.save(self.online_net.state_dict(), path)
+
+    def save_full_checkpoint(self, path: str, elapsed_seconds: float = 0.0) -> float:
+        """Save complete training state for resumability.
+
+        Args:
+            path: File path for the checkpoint (.pt).
+            elapsed_seconds: Accumulated training time to persist.
+
+        Returns:
+            elapsed_seconds (passed through, for convenience).
+        """
+        import os
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save({
+            "online_net": self.online_net.state_dict(),
+            "target_net": self.target_net.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "replay_buffer": self.replay_buffer.state_dict(),
+            "episode_count": self._episode_count,
+            "step_count": self._step_count,
+            "best_val_profit": self._best_val_profit,
+            "val_profits_history": self._val_profits_history,
+            "best_state_dict": self._best_state_dict,
+            "elapsed_seconds": elapsed_seconds,
+        }, path)
+        return elapsed_seconds
+
+    def load_full_checkpoint(self, path: str) -> float:
+        """Restore complete training state from a full checkpoint.
+
+        Returns:
+            Accumulated elapsed seconds stored in the checkpoint.
+        """
+        state = torch.load(path, map_location=self.device, weights_only=False)
+        self.online_net.load_state_dict(state["online_net"])
+        self.target_net.load_state_dict(state["target_net"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        self.replay_buffer.load_state_dict(state["replay_buffer"])
+        self._episode_count = state["episode_count"]
+        self._step_count = state["step_count"]
+        self._best_val_profit = state["best_val_profit"]
+        self._val_profits_history = state.get("val_profits_history", [])
+        self._best_state_dict = state.get("best_state_dict")
+        return float(state.get("elapsed_seconds", 0.0))
