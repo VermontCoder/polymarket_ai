@@ -498,37 +498,39 @@ class TestMultiTradePnL:
     """Reward reflects full episode P&L including intra-episode trades."""
 
     def test_buy_and_hold_win_positive_reward(self):
-        """Buy UP, hold to end, outcome UP → positive reward."""
+        """Buy UP, hold to end, outcome UP → positive total reward."""
         env = Environment()
         price = 50.0
         ep = _make_episode(num_rows=2, outcome="UP", up_ask=price)
         env.reset(ep)
-        env.step(1)   # buy UP at 50c
-        done, reward = env.step(0)
+        _, r1 = env.step(1)   # buy UP at 50c
+        done, r2 = env.step(0)
         assert done
 
         shares = compute_buy_shares(price, is_maker=False)
         cash_out = SHARES_PER_BUY * price
         payout = shares * 100.0  # UP outcome, UP shares
         expected = (payout - cash_out) / REWARD_NORMALIZATION
-        assert reward == pytest.approx(expected)
-        assert reward > 0
+        total_reward = r1 + r2
+        assert total_reward == pytest.approx(expected)
+        assert total_reward > 0
 
     def test_buy_and_hold_loss_negative_reward(self):
-        """Buy UP, hold to end, outcome DOWN → negative reward."""
+        """Buy UP, hold to end, outcome DOWN → negative total reward."""
         env = Environment()
         price = 50.0
         ep = _make_episode(num_rows=2, outcome="DOWN", up_ask=price)
         env.reset(ep)
-        env.step(1)
-        done, reward = env.step(0)
+        _, r1 = env.step(1)
+        done, r2 = env.step(0)
         assert done
 
         cash_out = SHARES_PER_BUY * price
         payout = 0.0  # wrong outcome
         expected = (payout - cash_out) / REWARD_NORMALIZATION
-        assert reward == pytest.approx(expected)
-        assert reward < 0
+        total_reward = r1 + r2
+        assert total_reward == pytest.approx(expected)
+        assert total_reward < 0
 
     def test_buy_sell_intra_episode_profit(self):
         """Buy UP at 50c, sell UP at 60c → intra-episode profit, no end payout."""
@@ -541,46 +543,48 @@ class TestMultiTradePnL:
         ]
         ep = _make_episode(outcome="UP", rows=rows)
         env.reset(ep)
-        env.step(1)   # buy UP at 50c
-        env.step(2)   # sell UP at 60c
-
-        done, reward = env.step(0)
+        _, r1 = env.step(1)   # buy UP at 50c
+        _, r2 = env.step(2)   # sell UP at 60c
+        done, r3 = env.step(0)
         assert done
 
         shares = compute_buy_shares(buy_price, is_maker=False)
         cash_out = SHARES_PER_BUY * buy_price
         cash_in = compute_sell_proceeds(shares, sell_price, is_maker=False)
         expected = (cash_in - cash_out) / REWARD_NORMALIZATION
-        assert reward == pytest.approx(expected, rel=1e-4)
-        assert reward > 0  # sold higher than bought
+        total_reward = r1 + r2 + r3
+        assert total_reward == pytest.approx(expected, rel=1e-4)
+        assert total_reward > 0  # sold higher than bought
 
     def test_no_trade_reward_zero(self):
-        """No trades → reward = 0."""
+        """No trades → all step rewards = 0."""
         env = Environment()
         ep = _make_episode(num_rows=3, outcome="UP")
         env.reset(ep)
         for _ in range(2):
             done, r = env.step(0)
             assert not done
+            assert r == pytest.approx(0.0)
         done, reward = env.step(0)
         assert done
         assert reward == pytest.approx(0.0)
 
     def test_reward_normalized_by_500(self):
-        """Reward is divided by REWARD_NORMALIZATION (500), not 100."""
+        """Total episode reward is divided by REWARD_NORMALIZATION (500), not 100."""
         env = Environment()
         price = 1.0  # cheapest buy, max win
         ep = _make_episode(num_rows=2, outcome="UP", up_ask=price)
         env.reset(ep)
-        env.step(1)
-        done, reward = env.step(0)
+        _, r1 = env.step(1)
+        done, r2 = env.step(0)
         assert done
-        # Max possible reward ≈ (5 * 100 - 5 * 1) / 500 ≈ 0.99
-        assert reward < 1.0
-        assert reward > 0.5  # but still substantial
+        # Max possible total reward ≈ (5 * 100 - 5 * 1) / 500 ≈ 0.99
+        total_reward = r1 + r2
+        assert total_reward < 1.0
+        assert total_reward > 0.5  # but still substantial
 
     def test_maker_buy_hold_win(self):
-        """Maker limit buy fills, hold to end, outcome matches → positive reward."""
+        """Maker limit buy fills, hold to end, outcome matches → positive total reward."""
         price = 50.0  # limit placed at up_ask - 1 = 56 - 1 = 55
         rows = [
             _make_row(up_ask=56.0),
@@ -590,9 +594,9 @@ class TestMultiTradePnL:
         ep = _make_episode(outcome="UP", rows=rows)
         env = Environment()
         env.reset(ep)
-        env.step(5)  # limit buy UP at 55c
-        env.step(0)  # wait for fill check
-        done, reward = env.step(0)
+        _, r1 = env.step(5)  # limit buy UP at 55c
+        _, r2 = env.step(0)  # wait for fill check
+        done, r3 = env.step(0)
         assert done
 
         limit_price = 55.0
@@ -600,7 +604,8 @@ class TestMultiTradePnL:
         cash_out = SHARES_PER_BUY * limit_price
         payout = shares * 100.0
         expected = (payout - cash_out) / REWARD_NORMALIZATION
-        assert reward == pytest.approx(expected, rel=1e-4)
+        total_reward = r1 + r2 + r3
+        assert total_reward == pytest.approx(expected, rel=1e-4)
 
     def test_unfilled_limit_buy_no_reward(self):
         """Unfilled limit buy order → 0 cash flow → reward 0."""

@@ -225,6 +225,9 @@ class Environment:
         self._pending_limit: dict[str, Any] | None = None
         self._trades: list[dict[str, Any]] = []
 
+        # Reward shaping: track mark-to-market value from previous step
+        self._prev_portfolio_value: float = 0.0
+
     def reset(self, episode: dict[str, Any]) -> None:
         """Initialize the environment with an episode dict."""
         self._episode = episode
@@ -236,6 +239,7 @@ class Environment:
         self._net_cash = 0.0
         self._pending_limit = None
         self._trades = []
+        self._prev_portfolio_value = 0.0
 
     def get_observation(self) -> dict[str, Any]:
         """Return current row data (forbidden fields stripped) plus is_sell_mode."""
@@ -276,6 +280,18 @@ class Environment:
         """Completed trades this episode (not including pending limit)."""
         return list(self._trades)
 
+    def _portfolio_value_at(self, row: dict[str, Any]) -> float:
+        """Mark-to-market portfolio value in cents at the given row's bid prices.
+
+        Uses bid prices (liquidation value). Returns net_cash when no position
+        is held. Returns 0.0 for the bid if the market is illiquid (None bid).
+        """
+        if self._shares_owned > 0 and self._share_direction:
+            key = "up_bid" if self._share_direction == "UP" else "down_bid"
+            bid = row.get(key) or 0.0
+            return self._net_cash + self._shares_owned * bid
+        return self._net_cash
+
     def step(self, action: int) -> tuple[bool, float]:
         """Process one timestep.
 
@@ -283,7 +299,14 @@ class Environment:
             action: Integer 0-8.
 
         Returns:
-            Tuple of (done, reward). reward is only meaningful when done=True.
+            Tuple of (done, reward).
+
+        Reward is the change in mark-to-market portfolio value this step,
+        normalised by REWARD_NORMALIZATION. At the terminal step the actual
+        outcome payout replaces the bid-price estimate, so the sum of all
+        step rewards equals the original terminal-only P&L reward exactly.
+        This potential-based shaping provides dense per-step feedback without
+        changing the optimal policy.
         """
         assert 0 <= action < NUM_ACTIONS, f"Invalid action: {action}"
 
@@ -310,8 +333,18 @@ class Environment:
         done = self._current_step >= len(self._rows)
 
         if done:
-            return True, self._compute_final_reward()
-        return False, 0.0
+            # Terminal: reveal actual payout instead of bid-price estimate
+            final_pnl = self._compute_final_reward() * REWARD_NORMALIZATION
+            reward = (final_pnl - self._prev_portfolio_value) / REWARD_NORMALIZATION
+            self._prev_portfolio_value = final_pnl
+        else:
+            # Intermediate: mark-to-market at next row's prices
+            next_row = self._rows[self._current_step]
+            portfolio_value = self._portfolio_value_at(next_row)
+            reward = (portfolio_value - self._prev_portfolio_value) / REWARD_NORMALIZATION
+            self._prev_portfolio_value = portfolio_value
+
+        return done, reward
 
     def _execute_action(self, action: int, row: dict[str, Any]) -> None:
         """Execute a trade action, updating shares and net_cash."""
