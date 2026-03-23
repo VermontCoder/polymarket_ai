@@ -6,7 +6,6 @@ Implements:
   - Soft target updates (Polyak averaging, tau=0.005)
   - Epsilon-greedy with linear decay
   - Gradient clipping (max norm 1.0)
-  - TensorBoard logging
   - Validation evaluation and early stopping
 """
 
@@ -22,6 +21,14 @@ from src.environment import Environment, NUM_ACTIONS
 from src.models.base import BaseModel
 from src.normalizer import Normalizer
 from src.replay_buffer import PrioritizedReplayBuffer
+
+
+_ACTION_NAMES = [
+    "do_nothing", "buy_up_taker", "sell_up_taker",
+    "buy_down_taker", "sell_down_taker",
+    "limit_buy_up", "limit_sell_up",
+    "limit_buy_down", "limit_sell_down",
+]
 
 
 class Trainer:
@@ -91,16 +98,7 @@ class Trainer:
         self._best_val_profit = -float("inf")
         self._val_no_improve = 0
         self._best_state_dict: Optional[dict] = None
-
-        # TensorBoard writer (lazy init)
-        self._writer = None
-
-    def _get_writer(self):
-        """Lazy-initialize TensorBoard writer."""
-        if self._writer is None:
-            from torch.utils.tensorboard import SummaryWriter
-            self._writer = SummaryWriter()
-        return self._writer
+        self._val_profits_history: list[float] = []
 
     @property
     def epsilon(self) -> float:
@@ -132,7 +130,6 @@ class Trainer:
         train_episodes: list[dict[str, Any]],
         val_episodes: list[dict[str, Any]],
         num_epochs: int = 1,
-        log_dir: Optional[str] = None,
     ) -> dict:
         """Run training loop over episodes.
 
@@ -140,15 +137,10 @@ class Trainer:
             train_episodes: Training episode dicts.
             val_episodes: Validation episode dicts.
             num_epochs: Number of passes over training episodes.
-            log_dir: TensorBoard log directory override.
 
         Returns:
             Dict with training stats.
         """
-        if log_dir is not None:
-            from torch.utils.tensorboard import SummaryWriter
-            self._writer = SummaryWriter(log_dir=log_dir)
-
         total_episodes_needed = num_epochs * len(train_episodes)
         self.config["total_episodes"] = total_episodes_needed
 
@@ -252,6 +244,58 @@ class Trainer:
 
         self.replay_buffer.add_episode(transitions)
         return final_reward, action_counts
+
+    def collect_episode(
+        self, episode: dict
+    ) -> tuple[float, np.ndarray, list[dict]]:
+        """Run one episode and return transitions WITHOUT adding to replay buffer.
+
+        Used by rollout workers in parallel single-run training.
+
+        Returns:
+            Tuple of (episode_reward, action_counts, transitions).
+        """
+        self.env.reset(episode)
+        static_features = self.normalizer.encode_static(episode)
+        action_counts = np.zeros(NUM_ACTIONS, dtype=np.int64)
+        transitions: list[dict] = []
+        final_reward = 0.0
+
+        for _ in range(self.env.num_rows):
+            obs = self.env.get_observation()
+            dynamic_features = self.normalizer.encode_dynamic(obs)
+            action_mask = self.env.get_action_mask()
+
+            action = self._select_action_train(
+                static_features, dynamic_features, action_mask
+            )
+            action_counts[action] += 1
+            done, reward = self.env.step(action)
+
+            next_dynamic = None
+            next_mask = None
+            if not done:
+                next_obs = self.env.get_observation()
+                next_dynamic = self.normalizer.encode_dynamic(next_obs)
+                next_mask = self.env.get_action_mask()
+            else:
+                final_reward = reward
+
+            transitions.append({
+                "static_features": static_features,
+                "dynamic_features": dynamic_features,
+                "action": action,
+                "reward": reward,
+                "next_dynamic_features": next_dynamic,
+                "done": done,
+                "action_mask": action_mask,
+                "next_action_mask": next_mask,
+            })
+
+            if done:
+                break
+
+        return final_reward, action_counts, transitions
 
     def _select_action_train(
         self,
@@ -454,46 +498,74 @@ class Trainer:
 
         return total_profit
 
+    def evaluate_with_actions(
+        self, episodes: list[dict]
+    ) -> tuple[float, dict[str, float]]:
+        """Evaluate greedily and return total profit plus action distribution.
+
+        Returns:
+            Tuple of (total_profit_cents, action_distribution dict).
+            action_distribution values sum to 1.0.
+        """
+        self.online_net.eval()
+        total_profit = 0.0
+        action_counts = np.zeros(NUM_ACTIONS, dtype=np.int64)
+
+        for ep in episodes:
+            self.env.reset(ep)
+            static_features = self.normalizer.encode_static(ep)
+            hidden = self.online_net.get_initial_hidden(
+                batch_size=1, device=self.device
+            )
+
+            for _ in range(self.env.num_rows):
+                obs = self.env.get_observation()
+                dynamic_features = self.normalizer.encode_dynamic(obs)
+                action_mask = self.env.get_action_mask()
+
+                with torch.no_grad():
+                    static_t = torch.tensor(
+                        static_features, dtype=torch.float32, device=self.device
+                    ).unsqueeze(0)
+                    dynamic_t = torch.tensor(
+                        dynamic_features, dtype=torch.float32, device=self.device
+                    ).unsqueeze(0).unsqueeze(0)
+                    q_values, hidden = self.online_net(static_t, dynamic_t, hidden)
+                    q_values = q_values.squeeze(0).cpu().numpy()
+
+                q_values[~action_mask] = -np.inf
+                action = int(np.argmax(q_values))
+                action_counts[action] += 1
+
+                done, reward = self.env.step(action)
+                if done:
+                    total_profit += reward * 100.0
+                    break
+
+        total = action_counts.sum()
+        dist = {
+            name: float(action_counts[i] / total) if total > 0 else 0.0
+            for i, name in enumerate(_ACTION_NAMES)
+        }
+        return total_profit, dist
+
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
 
     def _log_episode(self, reward: float, action_counts: np.ndarray) -> None:
-        """Log per-episode metrics to TensorBoard."""
-        writer = self._get_writer()
-        ep = self._episode_count
-        writer.add_scalar("episode/reward", reward, ep)
-        writer.add_scalar("episode/epsilon", self.epsilon, ep)
-
-        # Action distribution
-        total_actions = action_counts.sum()
-        if total_actions > 0:
-            for i in range(NUM_ACTIONS):
-                writer.add_scalar(
-                    f"actions/action_{i}_frac",
-                    action_counts[i] / total_actions,
-                    ep,
-                )
+        """Log per-episode metrics."""
+        pass
 
     def _log_train_step(
         self, loss: float, q_values: torch.Tensor, grad_norm: float
     ) -> None:
         """Log per-step training metrics."""
-        writer = self._get_writer()
-        step = self._step_count
-        writer.add_scalar("train/loss", loss, step)
-        writer.add_scalar("train/grad_norm", grad_norm, step)
-        writer.add_scalar("train/q_mean", q_values.mean().item(), step)
-        writer.add_scalar("train/q_std", q_values.std().item(), step)
-        writer.add_scalar("train/q_max", q_values.max().item(), step)
-        writer.add_scalar("train/q_min", q_values.min().item(), step)
+        pass
 
     def _log_validation(self, val_profit: float) -> None:
         """Log validation profit."""
-        writer = self._get_writer()
-        writer.add_scalar(
-            "val/total_profit_cents", val_profit, self._episode_count
-        )
+        self._val_profits_history.append(val_profit)
         print(
             f"[Episode {self._episode_count}] "
             f"Val profit: {val_profit:.2f}c | "
@@ -524,8 +596,3 @@ class Trainer:
     def save_checkpoint(self, path: str) -> None:
         """Save online network state dict."""
         torch.save(self.online_net.state_dict(), path)
-
-    def close(self) -> None:
-        """Close TensorBoard writer."""
-        if self._writer is not None:
-            self._writer.close()

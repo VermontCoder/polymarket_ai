@@ -101,7 +101,6 @@ def train_single(
         train_episodes=train_eps,
         val_episodes=val_eps,
         num_epochs=config.get("epochs", 1),
-        log_dir=log_dir,
     )
 
     # Final test evaluation
@@ -115,7 +114,6 @@ def train_single(
     trainer.save_checkpoint(save_path)
     print(f"Model saved to {save_path}")
 
-    trainer.close()
     return stats["best_val_profit"]
 
 

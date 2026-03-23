@@ -191,3 +191,76 @@ class TestEvaluateAllRows:
         total_profit = trainer.evaluate([ep1, ep2])
 
         assert total_profit == pytest.approx(0.0)
+
+
+class TestCollectEpisode:
+    def test_returns_reward_counts_transitions(self):
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _greedy_trainer(model, [ep])
+
+        reward, action_counts, transitions = trainer.collect_episode(ep)
+
+        assert isinstance(reward, float)
+        assert action_counts.sum() == 5
+        assert len(transitions) == 5
+
+    def test_does_not_add_to_replay_buffer(self):
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _greedy_trainer(model, [ep])
+
+        trainer.collect_episode(ep)
+
+        assert len(trainer.replay_buffer) == 0
+
+    def test_transitions_have_required_keys(self):
+        rows = [_make_row() for _ in range(3)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _greedy_trainer(model, [ep])
+
+        _, _, transitions = trainer.collect_episode(ep)
+
+        required = {"static_features", "dynamic_features", "action",
+                    "reward", "next_dynamic_features", "done",
+                    "action_mask", "next_action_mask"}
+        for t in transitions:
+            assert required.issubset(t.keys())
+
+
+class TestEvaluateWithActions:
+    def test_returns_profit_and_dist(self):
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _make_trainer(model, [ep])
+
+        profit, dist = trainer.evaluate_with_actions([ep])
+
+        assert isinstance(profit, float)
+        assert isinstance(dist, dict)
+        assert len(dist) == 9
+
+    def test_dist_sums_to_one(self):
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _make_trainer(model, [ep])
+
+        _, dist = trainer.evaluate_with_actions([ep])
+
+        assert sum(dist.values()) == pytest.approx(1.0)
+
+    def test_profit_matches_evaluate(self):
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        trainer = _make_trainer(model, [ep])
+
+        profit_with_actions, _ = trainer.evaluate_with_actions([ep])
+        profit_plain = trainer.evaluate([ep])
+
+        assert profit_with_actions == pytest.approx(profit_plain)

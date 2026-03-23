@@ -34,7 +34,6 @@ def test_trainer_on_validation_callback_is_called():
         on_validation=callback,
     )
     trainer.train(train_episodes=eps[:50], val_episodes=eps[50:], num_epochs=1)
-    trainer.close()
 
     assert callback.called, "on_validation callback was never called"
     # Callback receives (episode_count, val_profit, epsilon)
