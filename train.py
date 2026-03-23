@@ -40,10 +40,6 @@ def parse_args():
         help="Path to save best model checkpoint",
     )
     parser.add_argument(
-        "--log-dir", type=str, default=None,
-        help="TensorBoard log directory",
-    )
-    parser.add_argument(
         "--grid-search", action="store_true",
         help="Run hyperparameter grid search",
     )
@@ -63,6 +59,23 @@ def parse_args():
         "--num-workers", type=int, default=None,
         help="Number of parallel worker processes for grid search. "
              "Defaults to os.cpu_count().",
+    )
+    parser.add_argument(
+        "--max-hours", type=float, default=12.0,
+        help="Maximum training duration in hours (default: 12)",
+    )
+    parser.add_argument(
+        "--num-gpus", type=int, default=None,
+        help="Number of GPUs (rollout workers) for single-run training. "
+             "Defaults to all available GPUs, or 1 CPU worker if none.",
+    )
+    parser.add_argument(
+        "--checkpoint-dir", type=str, default="checkpoints/single_run",
+        help="Directory for checkpoints and train_log.jsonl",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Resume training from checkpoint in --checkpoint-dir",
     )
     return parser.parse_args()
 
@@ -374,6 +387,244 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
     train_single(train_eps, val_eps, test_eps, best_config, seed=42, save_path=save_path)
 
 
+def _handle_checkpoint_startup(checkpoint_dir: str, resume: bool) -> bool:
+    """Handle checkpoint startup logic.
+
+    Returns:
+        True if training should proceed, False if user chose to exit.
+    """
+    import glob as _glob
+
+    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pt")
+    best_path = os.path.join(checkpoint_dir, "checkpoint_best.pt")
+    log_path = os.path.join(checkpoint_dir, "train_log.jsonl")
+
+    if resume:
+        return True  # load happens in run_training_session
+
+    existing = [p for p in [checkpoint_path, best_path] if os.path.exists(p)]
+    if not existing:
+        return True
+
+    answer = input(
+        f"Checkpoints found in {checkpoint_dir!r}. "
+        "Clear them and start fresh? [y/N] "
+    ).strip().lower()
+    if answer == "y":
+        for p in existing:
+            os.remove(p)
+        if os.path.exists(log_path):
+            os.remove(log_path)
+        print("Checkpoints cleared. Starting fresh.")
+        return True
+
+    print("Exiting. Use --resume to continue from an existing checkpoint.")
+    return False
+
+
+def run_training_session(
+    train_eps: list,
+    val_eps: list,
+    config: dict,
+    checkpoint_dir: str,
+    max_hours: float,
+    num_gpus: int | None,
+    resume: bool,
+) -> None:
+    """Open-ended single-run training with parallel rollout workers.
+
+    Uses synchronous parallel rollouts: all workers collect episodes, then
+    coordinator trains, then validates — repeat until time limit or Ctrl+C.
+    """
+    import copy
+    import multiprocessing
+    import statistics
+    import time
+    from concurrent.futures import ProcessPoolExecutor
+
+    from src.train_display import TrainDisplay
+    from src.train_logger import TrainLogger
+    from src.rollout_worker import run_rollout_worker
+
+    if not _handle_checkpoint_startup(checkpoint_dir, resume):
+        return
+
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    normalizer = Normalizer()
+    normalizer.fit(train_eps)
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = LSTMDQN(lstm_hidden_size=config.get("lstm_hidden", 32))
+    # Note: Trainer uses "epsilon_decay_episodes" but the CLI arg is "epsilon_decay".
+    # Map explicitly here so the CLI arg takes effect.
+    trainer = Trainer(
+        model=model,
+        normalizer=normalizer,
+        config={
+            "lr": config.get("lr", 1e-4),
+            "seq_len": config.get("seq_len", 20),
+            "epsilon_decay_episodes": config.get("epsilon_decay", 300),
+        },
+        device=device,
+    )
+
+    checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pt")
+    best_path = os.path.join(checkpoint_dir, "checkpoint_best.pt")
+    log_path = os.path.join(checkpoint_dir, "train_log.jsonl")
+
+    # Count existing log entries to continue checkpoint numbering on resume
+    elapsed_seconds = 0.0
+    checkpoint_num = 0
+    if resume and os.path.exists(checkpoint_path):
+        elapsed_seconds = trainer.load_full_checkpoint(checkpoint_path)
+        if os.path.exists(log_path):
+            with open(log_path) as f:
+                checkpoint_num = sum(1 for _ in f)
+        print(
+            f"Resumed from checkpoint #{checkpoint_num}. "
+            f"Episode {trainer._episode_count}. "
+            f"Elapsed: {elapsed_seconds:.0f}s"
+        )
+
+    # Determine worker devices
+    n_cuda = torch.cuda.device_count()
+    if n_cuda == 0:
+        worker_devices = ["cpu"]
+    else:
+        n = min(num_gpus, n_cuda) if num_gpus else n_cuda
+        worker_devices = [f"cuda:{i}" for i in range(n)]
+
+    n_workers = len(worker_devices)
+    val_every = trainer.config["val_every_episodes"]
+    episodes_per_worker = max(1, val_every // n_workers)
+    max_elapsed = max_hours * 3600
+
+    # Required for CUDA in subprocesses
+    if n_cuda > 0:
+        try:
+            multiprocessing.set_start_method("spawn", force=True)
+        except RuntimeError:
+            pass
+
+    rng = np.random.default_rng(seed=0)
+    logger = TrainLogger(log_path)
+    start_wall = time.time()
+    display_config = {**config, "num_gpus": n_workers}
+
+    try:
+        with TrainDisplay(
+            config=display_config,
+            max_hours=max_hours,
+            elapsed_offset=elapsed_seconds,
+        ) as display:
+            while True:
+                current_elapsed = elapsed_seconds + (time.time() - start_wall)
+                if current_elapsed >= max_elapsed:
+                    print(f"\nTime limit reached ({max_hours}h). Stopping.")
+                    break
+
+                # Broadcast current weights (CPU tensors for pickle)
+                state_dict = {
+                    k: v.cpu() for k, v in trainer.online_net.state_dict().items()
+                }
+                episode_count_snap = trainer._episode_count
+
+                # Sample episodes for each worker
+                indices = rng.choice(len(train_eps), size=n_workers * episodes_per_worker, replace=True)
+                worker_batches = [
+                    [train_eps[i] for i in indices[w * episodes_per_worker:(w + 1) * episodes_per_worker]]
+                    for w in range(n_workers)
+                ]
+
+                # Collect rollouts (parallel or single-process)
+                all_results: list[tuple] = []
+                if n_workers == 1 and worker_devices[0] == "cpu":
+                    # Single-process inline (no subprocess overhead)
+                    all_results = run_rollout_worker(
+                        state_dict=state_dict,
+                        episodes=worker_batches[0],
+                        normalizer=normalizer,
+                        config=trainer.config,
+                        episode_count=episode_count_snap,
+                        device_str="cpu",
+                    )
+                else:
+                    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+                        futures = [
+                            pool.submit(
+                                run_rollout_worker,
+                                state_dict=state_dict,
+                                episodes=worker_batches[w],
+                                normalizer=normalizer,
+                                config=trainer.config,
+                                episode_count=episode_count_snap,
+                                device_str=worker_devices[w],
+                            )
+                            for w in range(n_workers)
+                        ]
+                        for fut in futures:
+                            all_results.extend(fut.result())
+
+                # Merge experiences into replay buffer
+                for reward, action_counts, transitions in all_results:
+                    trainer.replay_buffer.add_episode(transitions)
+                    trainer._episode_count += 1
+
+                # Run one training step per episode collected (mirrors original loop)
+                for _ in range(len(all_results)):
+                    if len(trainer.replay_buffer) >= trainer.config["min_buffer_size"]:
+                        trainer._train_step()
+                        trainer._step_count += 1
+
+                # Validate
+                val_profit, action_dist = trainer.evaluate_with_actions(val_eps)
+                trainer._val_profits_history.append(val_profit)
+                is_new_best = val_profit > trainer._best_val_profit
+                if is_new_best:
+                    trainer._best_val_profit = val_profit
+                    trainer._best_state_dict = copy.deepcopy(
+                        trainer.online_net.state_dict()
+                    )
+
+                best_profit = trainer._best_val_profit
+                median_profit = statistics.median(trainer._val_profits_history)
+                checkpoint_num += 1
+                current_elapsed = elapsed_seconds + (time.time() - start_wall)
+
+                # Update display
+                display.update(
+                    episode=trainer._episode_count,
+                    val_profit=val_profit,
+                    best_profit=best_profit,
+                    median_profit=median_profit,
+                    epsilon=trainer.epsilon,
+                    action_distribution=action_dist,
+                    checkpoint_num=checkpoint_num,
+                    is_new_best=is_new_best,
+                )
+
+                # Append log entry
+                logger.append(
+                    checkpoint=checkpoint_num,
+                    episode=trainer._episode_count,
+                    elapsed_seconds=current_elapsed,
+                    val_profit_cents=val_profit,
+                    best_profit_cents=best_profit,
+                    median_profit_cents=median_profit,
+                    epsilon=trainer.epsilon,
+                    action_distribution=action_dist,
+                )
+
+                # Save checkpoints
+                trainer.save_full_checkpoint(checkpoint_path, elapsed_seconds=current_elapsed)
+                if is_new_best:
+                    trainer.save_full_checkpoint(best_path, elapsed_seconds=current_elapsed)
+
+    except KeyboardInterrupt:
+        print("\nTraining interrupted. Last checkpoint saved.")
+
+
 def main():
     args = parse_args()
 
@@ -394,18 +645,23 @@ def main():
     )
 
     if args.grid_search:
-        grid_search(train_eps, val_eps, test_eps, args.save_path, num_workers=args.num_workers)
+        grid_search(train_eps, val_eps, test_eps, args.save_path,
+                    num_workers=args.num_workers)
     else:
         config = {
             "lr": args.lr,
             "lstm_hidden": args.lstm_hidden,
             "seq_len": args.seq_len,
             "epsilon_decay": args.epsilon_decay,
-            "epochs": args.epochs,
         }
-        train_single(
-            train_eps, val_eps, test_eps, config, args.seed,
-            args.save_path, args.log_dir,
+        run_training_session(
+            train_eps=train_eps,
+            val_eps=val_eps,
+            config=config,
+            checkpoint_dir=args.checkpoint_dir,
+            max_hours=args.max_hours,
+            num_gpus=args.num_gpus,
+            resume=args.resume,
         )
 
 
