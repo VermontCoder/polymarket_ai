@@ -230,6 +230,21 @@ class TestCollectEpisode:
         for t in transitions:
             assert required.issubset(t.keys())
 
+    def test_uses_epsilon_greedy_not_greedy(self):
+        """With epsilon=1.0, model forward() should never be called (pure random)."""
+        rows = [_make_row() for _ in range(5)]
+        ep = _make_episode(outcome="UP", rows=rows)
+        model = CountingModel(forced_action=0)
+        # epsilon=1.0 → always random, model never consulted
+        trainer = _make_trainer(
+            model, [ep],
+            config={"epsilon_start": 1.0, "epsilon_end": 1.0},
+        )
+
+        trainer.collect_episode(ep)
+
+        assert model.call_count == 0
+
 
 class TestEvaluateWithActions:
     def test_returns_profit_and_dist(self):

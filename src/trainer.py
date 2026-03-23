@@ -29,6 +29,9 @@ _ACTION_NAMES = [
     "limit_buy_up", "limit_sell_up",
     "limit_buy_down", "limit_sell_down",
 ]
+assert len(_ACTION_NAMES) == NUM_ACTIONS, (
+    f"_ACTION_NAMES has {len(_ACTION_NAMES)} entries but NUM_ACTIONS={NUM_ACTIONS}"
+)
 
 
 class Trainer:
