@@ -105,6 +105,19 @@ class SumTree:
             self._tree[tree_idx] += delta
             tree_idx //= 2
 
+    def state_dict(self) -> dict:
+        return {
+            "capacity": self.capacity,
+            "tree": self._tree.copy(),
+            "write_idx": self._write_idx,
+            "size": self._size,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self._tree = state["tree"].copy()
+        self._write_idx = state["write_idx"]
+        self._size = state["size"]
+
 
 # ---------------------------------------------------------------------------
 # Prioritized Replay Buffer
@@ -345,6 +358,46 @@ class PrioritizedReplayBuffer:
 
     def __len__(self) -> int:
         return self._size
+
+    def state_dict(self) -> dict:
+        """Return serializable snapshot of buffer state."""
+        return {
+            "tree": self._tree.state_dict(),
+            "static_features": self._static_features.copy(),
+            "dynamic_features": self._dynamic_features.copy(),
+            "actions": self._actions.copy(),
+            "rewards": self._rewards.copy(),
+            "next_dynamic_features": self._next_dynamic_features.copy(),
+            "dones": self._dones.copy(),
+            "action_masks": self._action_masks.copy(),
+            "next_action_masks": self._next_action_masks.copy(),
+            "episode_ids": self._episode_ids.copy(),
+            "positions": self._positions.copy(),
+            "episode_lengths": self._episode_lengths.copy(),
+            "write_idx": self._write_idx,
+            "size": self._size,
+            "max_priority": self._max_priority,
+            "episode_counter": self._episode_counter,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore buffer state from a state_dict snapshot."""
+        self._tree.load_state_dict(state["tree"])
+        self._static_features = state["static_features"].copy()
+        self._dynamic_features = state["dynamic_features"].copy()
+        self._actions = state["actions"].copy()
+        self._rewards = state["rewards"].copy()
+        self._next_dynamic_features = state["next_dynamic_features"].copy()
+        self._dones = state["dones"].copy()
+        self._action_masks = state["action_masks"].copy()
+        self._next_action_masks = state["next_action_masks"].copy()
+        self._episode_ids = state["episode_ids"].copy()
+        self._positions = state["positions"].copy()
+        self._episode_lengths = state["episode_lengths"].copy()
+        self._write_idx = state["write_idx"]
+        self._size = state["size"]
+        self._max_priority = state["max_priority"]
+        self._episode_counter = state["episode_counter"]
 
     # ------------------------------------------------------------------
     # Internal helpers

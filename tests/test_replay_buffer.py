@@ -677,3 +677,48 @@ class TestReplayBufferIntegration:
         # Sampling should still work (no zero-division)
         batch = buf.sample(batch_size=1, beta=0.4)
         assert batch["weights"][0] > 0
+
+
+class TestReplayBufferStateDictRoundtrip:
+    def _make_transition(self, done=False):
+        return {
+            "static_features": np.zeros(37, dtype=np.float32),
+            "dynamic_features": np.zeros(12, dtype=np.float32),
+            "action": 0,
+            "reward": 0.0,
+            "next_dynamic_features": None if done else np.zeros(12, dtype=np.float32),
+            "done": done,
+            "action_mask": np.ones(9, dtype=bool),
+            "next_action_mask": None if done else np.ones(9, dtype=bool),
+        }
+
+    def test_state_dict_restores_size(self):
+        buf = PrioritizedReplayBuffer(capacity=100, seq_len=3)
+        episode = [self._make_transition() for _ in range(4)]
+        episode[-1] = self._make_transition(done=True)
+        buf.add_episode(episode)
+
+        state = buf.state_dict()
+        buf2 = PrioritizedReplayBuffer(capacity=100, seq_len=3)
+        buf2.load_state_dict(state)
+
+        assert len(buf2) == len(buf)
+
+    def test_state_dict_restores_sampling(self, tmp_path):
+        import torch
+        buf = PrioritizedReplayBuffer(capacity=200, seq_len=3)
+        for _ in range(10):
+            episode = [self._make_transition() for _ in range(5)]
+            episode[-1] = self._make_transition(done=True)
+            buf.add_episode(episode)
+
+        state = buf.state_dict()
+        path = tmp_path / "buf.pt"
+        torch.save(state, path)
+
+        buf2 = PrioritizedReplayBuffer(capacity=200, seq_len=3)
+        buf2.load_state_dict(torch.load(path, weights_only=False))
+
+        # Both buffers should be sample-able
+        batch = buf2.sample(batch_size=4, beta=0.4)
+        assert batch["actions"].shape[0] == 4
