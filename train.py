@@ -70,6 +70,10 @@ def parse_args():
              "Defaults to all available GPUs, or 1 CPU worker if none.",
     )
     parser.add_argument(
+        "--epsilon-end", type=float, default=0.15,
+        help="Epsilon floor for greedy exploration (default: 0.15)",
+    )
+    parser.add_argument(
         "--tau", type=float, default=0.005,
         help="Soft target network update rate (default: 0.005)",
     )
@@ -477,6 +481,7 @@ def run_training_session(
             "episodes_per_epoch": len(train_eps),
             "tau": config.get("tau", 0.005),
             "buffer_capacity": config.get("buffer_capacity", 50_000),
+            "epsilon_end": config.get("epsilon_end", 0.15),
         },
         device=device,
     )
@@ -687,6 +692,7 @@ def main():
             "lstm_hidden": args.lstm_hidden,
             "seq_len": args.seq_len,
             "epsilon_decay": args.epsilon_decay,
+            "epsilon_end": args.epsilon_end,
             "tau": args.tau,
             "buffer_capacity": args.buffer_capacity,
         }
