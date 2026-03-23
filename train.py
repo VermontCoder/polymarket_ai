@@ -70,6 +70,14 @@ def parse_args():
              "Defaults to all available GPUs, or 1 CPU worker if none.",
     )
     parser.add_argument(
+        "--tau", type=float, default=0.005,
+        help="Soft target network update rate (default: 0.005)",
+    )
+    parser.add_argument(
+        "--buffer-capacity", type=int, default=50_000,
+        help="Replay buffer capacity (default: 50000)",
+    )
+    parser.add_argument(
         "--checkpoint-dir", type=str, default="checkpoints/single_run",
         help="Directory for checkpoints and train_log.jsonl",
     )
@@ -467,6 +475,8 @@ def run_training_session(
             "epsilon_decay_episodes": config.get("epsilon_decay", 300),
             "lstm_hidden": config.get("lstm_hidden", 32),
             "episodes_per_epoch": len(train_eps),
+            "tau": config.get("tau", 0.005),
+            "buffer_capacity": config.get("buffer_capacity", 50_000),
         },
         device=device,
     )
@@ -677,6 +687,8 @@ def main():
             "lstm_hidden": args.lstm_hidden,
             "seq_len": args.seq_len,
             "epsilon_decay": args.epsilon_decay,
+            "tau": args.tau,
+            "buffer_capacity": args.buffer_capacity,
         }
         run_training_session(
             train_eps=train_eps,
