@@ -67,6 +67,7 @@ class TrainDisplay:
         self._history: list[dict] = []
         self._latest_dist: Optional[dict] = None
         self._episode_count = 0
+        self._epoch = 0
         self._epsilon = 1.0
         self._last_ep_count: int = 0
         self._last_update_time: datetime = datetime.now()
@@ -88,6 +89,8 @@ class TrainDisplay:
         val_profit: float,
         best_profit: float,
         median_profit: float,
+        epoch_median: float,
+        epoch: int,
         epsilon: float,
         action_distribution: dict[str, float],
         checkpoint_num: int,
@@ -101,6 +104,8 @@ class TrainDisplay:
                          ambiguity (best_profit is already updated by the
                          time update() is called).
         """
+        import statistics as _stats
+
         # Compute speed (eps/sec) since last update
         now = datetime.now()
         dt = (now - self._last_update_time).total_seconds()
@@ -110,14 +115,22 @@ class TrainDisplay:
         self._last_update_time = now
 
         self._episode_count = episode
+        self._epoch = epoch
         self._epsilon = epsilon
         self._latest_dist = action_distribution
+
+        # Recent median: median of the last _MAX_HISTORY_ROWS val profits
+        recent_vals = [r["val_profit"] for r in self._history[-((_MAX_HISTORY_ROWS - 1)):]] + [val_profit]
+        recent_median = _stats.median(recent_vals)
+
         self._history.append({
             "checkpoint": checkpoint_num,
             "episode": episode,
             "val_profit": val_profit,
             "best_profit": best_profit,
             "median_profit": median_profit,
+            "recent_median": recent_median,
+            "epoch_median": epoch_median,
             "epsilon": epsilon,
             "is_best": is_new_best,
         })
@@ -151,10 +164,10 @@ class TrainDisplay:
         content = (
             f"lr={cfg.get('lr')}  hidden={cfg.get('lstm_hidden')}  "
             f"seq={cfg.get('seq_len')}  \u03b5-decay={cfg.get('epsilon_decay')}  "
-            f"workers={cfg.get('num_gpus', 1)}\n"
+            f"gpus={cfg.get('num_gpus', 1)}\n"
             f"Started: {self._start_wall.strftime('%Y-%m-%d %H:%M')}  \u2502  "
             f"Elapsed: {elapsed_td}  \u2502  Remaining: {remaining_str}\n"
-            f"Episodes: {self._episode_count:,}  \u2502  Speed: {self._speed_eps_per_sec:.1f} eps/sec  \u2502  \u03b5: {self._epsilon:.3f}"
+            f"Epoch: {self._epoch}  \u2502  Episodes: {self._episode_count:,}  \u2502  Speed: {self._speed_eps_per_sec:.1f} eps/sec  \u2502  \u03b5: {self._epsilon:.3f}"
         )
         return Panel(content, title="Single Run Training")
 
@@ -163,8 +176,10 @@ class TrainDisplay:
         table.add_column("#", style="dim", width=5)
         table.add_column("Episode", width=9)
         table.add_column("Val Profit", width=12)
-        table.add_column("Best Profit", width=12)
-        table.add_column("Median", width=10)
+        table.add_column("Best", width=10)
+        table.add_column("All-time", width=10)
+        table.add_column("Recent", width=10)
+        table.add_column("Epoch", width=10)
         table.add_column("\u03b5", width=7)
 
         rows = self._history[-_MAX_HISTORY_ROWS:]
@@ -177,6 +192,8 @@ class TrainDisplay:
                 f"{_format_profit(r['val_profit'])}{star}",
                 _format_profit(r["best_profit"]),
                 _format_profit(r["median_profit"]),
+                _format_profit(r["recent_median"]),
+                _format_profit(r["epoch_median"]),
                 f"{r['epsilon']:.3f}",
                 style=style,
             )

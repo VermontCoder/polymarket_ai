@@ -465,6 +465,8 @@ def run_training_session(
             "lr": config.get("lr", 1e-4),
             "seq_len": config.get("seq_len", 20),
             "epsilon_decay_episodes": config.get("epsilon_decay", 300),
+            "lstm_hidden": config.get("lstm_hidden", 32),
+            "episodes_per_epoch": len(train_eps),
         },
         device=device,
     )
@@ -511,6 +513,10 @@ def run_training_session(
     logger = TrainLogger(log_path)
     start_wall = time.time()
     display_config = {**config, "num_gpus": n_workers}
+
+    episodes_per_epoch = len(train_eps)
+    current_epoch_num = trainer._episode_count // episodes_per_epoch
+    epoch_val_profits: list[float] = []
 
     try:
         with TrainDisplay(
@@ -589,6 +595,15 @@ def run_training_session(
 
                 best_profit = trainer._best_val_profit
                 median_profit = statistics.median(trainer._val_profits_history)
+
+                # Epoch median: reset when episode count crosses an epoch boundary
+                new_epoch_num = trainer._episode_count // episodes_per_epoch
+                if new_epoch_num != current_epoch_num:
+                    epoch_val_profits = []
+                    current_epoch_num = new_epoch_num
+                epoch_val_profits.append(val_profit)
+                epoch_median = statistics.median(epoch_val_profits)
+
                 checkpoint_num += 1
                 current_elapsed = elapsed_seconds + (time.time() - start_wall)
 
@@ -598,6 +613,8 @@ def run_training_session(
                     val_profit=val_profit,
                     best_profit=best_profit,
                     median_profit=median_profit,
+                    epoch_median=epoch_median,
+                    epoch=current_epoch_num,
                     epsilon=trainer.epsilon,
                     action_distribution=action_dist,
                     checkpoint_num=checkpoint_num,
@@ -612,6 +629,7 @@ def run_training_session(
                     val_profit_cents=val_profit,
                     best_profit_cents=best_profit,
                     median_profit_cents=median_profit,
+                    epoch_median_cents=epoch_median,
                     epsilon=trainer.epsilon,
                     action_distribution=action_dist,
                 )

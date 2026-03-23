@@ -24,6 +24,7 @@ class TrainLogger:
         val_profit_cents: float,
         best_profit_cents: float,
         median_profit_cents: float,
+        epoch_median_cents: float,
         epsilon: float,
         action_distribution: dict[str, float],
     ) -> None:
@@ -36,6 +37,7 @@ class TrainLogger:
             "val_profit_cents": round(val_profit_cents, 2),
             "best_profit_cents": round(best_profit_cents, 2),
             "median_profit_cents": round(median_profit_cents, 2),
+            "epoch_median_cents": round(epoch_median_cents, 2),
             "epsilon": round(epsilon, 4),
             "action_distribution": {
                 k: round(v, 4) for k, v in action_distribution.items()

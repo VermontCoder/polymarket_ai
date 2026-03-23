@@ -42,7 +42,7 @@ class TestTrainDisplay:
         display = TrainDisplay(config=self._CONFIG, max_hours=12.0)
         display.update(
             episode=50, val_profit=10.0, best_profit=10.0,
-            median_profit=10.0, epsilon=0.9,
+            median_profit=10.0, epoch_median=10.0, epoch=0, epsilon=0.9,
             action_distribution=self._DIST, checkpoint_num=1,
             is_new_best=True,
         )
@@ -53,7 +53,7 @@ class TestTrainDisplay:
         for i in range(15):
             display.update(
                 episode=(i+1)*50, val_profit=float(i), best_profit=float(i),
-                median_profit=float(i), epsilon=0.9,
+                median_profit=float(i), epoch_median=float(i), epoch=0, epsilon=0.9,
                 action_distribution=self._DIST, checkpoint_num=i+1,
                 is_new_best=False,
             )

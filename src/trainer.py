@@ -50,7 +50,7 @@ class Trainer:
         "gamma": 0.99,
         "tau": 0.005,
         "epsilon_start": 1.0,
-        "epsilon_end": 0.05,
+        "epsilon_end": 0.15,
         "epsilon_decay_episodes": 300,
         "buffer_capacity": 50_000,
         "seq_len": 20,
@@ -105,11 +105,19 @@ class Trainer:
 
     @property
     def epsilon(self) -> float:
-        """Current epsilon for epsilon-greedy exploration."""
+        """Current epsilon for epsilon-greedy exploration.
+
+        If episodes_per_epoch is set in config, epsilon resets at the start
+        of each epoch so every pass through the data gets a fresh exploration
+        phase. Otherwise decays monotonically from epsilon_start to epsilon_end.
+        """
         cfg = self.config
-        frac = min(
-            self._episode_count / max(cfg["epsilon_decay_episodes"], 1), 1.0
-        )
+        episodes_per_epoch = cfg.get("episodes_per_epoch")
+        if episodes_per_epoch:
+            count = self._episode_count % max(episodes_per_epoch, 1)
+        else:
+            count = self._episode_count
+        frac = min(count / max(cfg["epsilon_decay_episodes"], 1), 1.0)
         return cfg["epsilon_start"] + frac * (
             cfg["epsilon_end"] - cfg["epsilon_start"]
         )
