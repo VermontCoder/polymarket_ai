@@ -518,6 +518,10 @@ def run_training_session(
     current_epoch_num = trainer._episode_count // episodes_per_epoch
     epoch_val_profits: list[float] = []
 
+    # Create the worker pool once outside the loop so CUDA contexts are
+    # initialized once per process rather than every round.
+    pool = ProcessPoolExecutor(max_workers=n_workers) if n_workers > 1 or worker_devices[0] != "cpu" else None
+
     try:
         with TrainDisplay(
             config=display_config,
@@ -545,7 +549,7 @@ def run_training_session(
 
                 # Collect rollouts (parallel or single-process)
                 all_results: list[tuple] = []
-                if n_workers == 1 and worker_devices[0] == "cpu":
+                if pool is None:
                     # Single-process inline (no subprocess overhead)
                     all_results = run_rollout_worker(
                         state_dict=state_dict,
@@ -556,21 +560,20 @@ def run_training_session(
                         device_str="cpu",
                     )
                 else:
-                    with ProcessPoolExecutor(max_workers=n_workers) as pool:
-                        futures = [
-                            pool.submit(
-                                run_rollout_worker,
-                                state_dict=state_dict,
-                                episodes=worker_batches[w],
-                                normalizer=normalizer,
-                                config=trainer.config,
-                                episode_count=episode_count_snap,
-                                device_str=worker_devices[w],
-                            )
-                            for w in range(n_workers)
-                        ]
-                        for fut in futures:
-                            all_results.extend(fut.result())
+                    futures = [
+                        pool.submit(
+                            run_rollout_worker,
+                            state_dict=state_dict,
+                            episodes=worker_batches[w],
+                            normalizer=normalizer,
+                            config=trainer.config,
+                            episode_count=episode_count_snap,
+                            device_str=worker_devices[w],
+                        )
+                        for w in range(n_workers)
+                    ]
+                    for fut in futures:
+                        all_results.extend(fut.result())
 
                 # Merge experiences into replay buffer
                 for reward, action_counts, transitions in all_results:
@@ -641,6 +644,9 @@ def run_training_session(
 
     except KeyboardInterrupt:
         print("\nTraining interrupted. Last checkpoint saved.")
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=False)
 
 
 def main():
