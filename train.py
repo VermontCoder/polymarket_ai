@@ -122,6 +122,7 @@ def train_single(
             "lr": config.get("lr", 1e-4),
             "seq_len": config.get("seq_len", 20),
             "epsilon_decay_episodes": config.get("epsilon_decay", 300),
+            "inactivity_penalty": config.get("inactivity_penalty", 0.0),
         },
         device=device,
         on_validation=on_validation,
@@ -288,7 +289,8 @@ def run_config_worker(
     return key, seed_profits, median_profit
 
 
-def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers=None):
+def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers=None,
+                inactivity_penalty=0.0):
     """Run hyperparameter grid search with parallel workers and Rich live display.
 
     Args:
@@ -326,6 +328,7 @@ def grid_search(train_eps, val_eps, test_eps, save_path, seeds=None, num_workers
     for combo in all_combos:
         config = dict(zip(keys_list, combo))
         config["epochs"] = 3
+        config["inactivity_penalty"] = inactivity_penalty
         if _config_key(config) not in results:
             pending.append(config)
 
@@ -691,7 +694,8 @@ def main():
 
     if args.grid_search:
         grid_search(train_eps, val_eps, test_eps, args.save_path,
-                    num_workers=args.num_workers)
+                    num_workers=args.num_workers,
+                    inactivity_penalty=args.inactivity_penalty)
     else:
         config = {
             "lr": args.lr,
