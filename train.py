@@ -89,6 +89,11 @@ def parse_args():
         "--resume", action="store_true",
         help="Resume training from checkpoint in --checkpoint-dir",
     )
+    parser.add_argument(
+        "--inactivity-penalty", type=float, default=5.0,
+        help="Reward penalty in cents per share when agent makes no trades "
+             "in an episode (default: 5.0). Set to 0 to disable.",
+    )
     return parser.parse_args()
 
 
@@ -482,6 +487,7 @@ def run_training_session(
             "tau": config.get("tau", 0.005),
             "buffer_capacity": config.get("buffer_capacity", 50_000),
             "epsilon_end": config.get("epsilon_end", 0.15),
+            "inactivity_penalty": config.get("inactivity_penalty", 5.0),
         },
         device=device,
     )
@@ -695,6 +701,7 @@ def main():
             "epsilon_end": args.epsilon_end,
             "tau": args.tau,
             "buffer_capacity": args.buffer_capacity,
+            "inactivity_penalty": args.inactivity_penalty,
         }
         run_training_session(
             train_eps=train_eps,

@@ -212,7 +212,16 @@ class Environment:
                 break
     """
 
-    def __init__(self) -> None:
+    def __init__(self, inactivity_penalty: float = 0.0) -> None:
+        """
+        Args:
+            inactivity_penalty: Reward penalty (in cents per share) applied when
+                the agent makes no completed trades in an episode. Converted to
+                normalized units via SHARES_PER_BUY / REWARD_NORMALIZATION.
+                Default 0.0 (no penalty).
+        """
+        self._inactivity_penalty = inactivity_penalty
+
         self._episode: dict[str, Any] | None = None
         self._rows: list[dict[str, Any]] = []
         self._current_step: int = 0
@@ -403,7 +412,12 @@ class Environment:
                 self._pending_limit = None
 
     def _compute_final_reward(self) -> float:
-        """Compute episode reward at end: (net_cash + end_payout) / REWARD_NORMALIZATION."""
+        """Compute episode reward at end: (net_cash + end_payout) / REWARD_NORMALIZATION.
+
+        If the agent made no completed trades and inactivity_penalty > 0, a
+        penalty of (inactivity_penalty * SHARES_PER_BUY) / REWARD_NORMALIZATION
+        is subtracted from the reward to discourage pure do-nothing policies.
+        """
         # Payout for any shares still held at episode end
         if self._shares_owned > 0 and self._share_direction:
             payout = (
@@ -416,4 +430,9 @@ class Environment:
 
         # Pending unfilled limit → no cash effect (order simply cancels)
         total_pnl = self._net_cash + payout
+
+        # Apply inactivity penalty when no trade was ever completed
+        if not self._trades and self._inactivity_penalty > 0.0:
+            total_pnl -= self._inactivity_penalty * SHARES_PER_BUY
+
         return total_pnl / REWARD_NORMALIZATION

@@ -61,6 +61,7 @@ class Trainer:
         "val_every_episodes": 50,
         "early_stop_patience": 50,  # in validation checkpoints
         "min_buffer_size": 100,
+        "inactivity_penalty": 0.0,
     }
 
     def __init__(
@@ -93,7 +94,9 @@ class Trainer:
             seq_len=self.config["seq_len"],
         )
 
-        self.env = Environment()
+        self.env = Environment(
+            inactivity_penalty=self.config["inactivity_penalty"],
+        )
 
         # Training state
         self._episode_count = 0
