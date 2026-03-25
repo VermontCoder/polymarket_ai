@@ -205,8 +205,10 @@ class Trainer:
     ) -> tuple[float, np.ndarray]:
         """Run one episode, collecting all transitions for the replay buffer.
 
-        With multi-trade mechanics, all rows are informative. Reward is 0 for
-        non-terminal steps and the episode P&L at the terminal step.
+        The environment returns 0 reward for non-terminal steps and the full
+        episode P&L at the terminal step. After the episode we redistribute
+        that terminal reward uniformly across all N transitions so every row
+        carries an equal share of the final outcome signal.
 
         Returns:
             Tuple of (episode_reward, action_counts array of shape (9,)).
@@ -216,7 +218,6 @@ class Trainer:
         action_counts = np.zeros(NUM_ACTIONS, dtype=np.int64)
 
         transitions: list[dict] = []
-        final_reward = 0.0
 
         for step_idx in range(self.env.num_rows):
             obs = self.env.get_observation()
@@ -236,14 +237,12 @@ class Trainer:
                 next_obs = self.env.get_observation()
                 next_dynamic = self.normalizer.encode_dynamic(next_obs)
                 next_mask = self.env.get_action_mask()
-            else:
-                final_reward = reward
 
             transitions.append({
                 "static_features": static_features,
                 "dynamic_features": dynamic_features,
                 "action": action,
-                "reward": reward,  # 0.0 for non-terminal, P&L at terminal
+                "reward": reward,  # will be overwritten below
                 "next_dynamic_features": next_dynamic,
                 "done": done,
                 "action_mask": action_mask,
@@ -253,8 +252,16 @@ class Trainer:
             if done:
                 break
 
+        # Distribute terminal P&L evenly across all steps so every row
+        # receives a reward with the same sign as the final outcome.
+        n = len(transitions)
+        episode_reward = transitions[-1]["reward"] if n > 0 else 0.0
+        per_step = episode_reward / n if n > 0 else 0.0
+        for t in transitions:
+            t["reward"] = per_step
+
         self.replay_buffer.add_episode(transitions)
-        return final_reward, action_counts
+        return episode_reward, action_counts
 
     def collect_episode(
         self, episode: dict
@@ -262,6 +269,8 @@ class Trainer:
         """Run one episode and return transitions WITHOUT adding to replay buffer.
 
         Used by rollout workers in parallel single-run training.
+        Terminal P&L is redistributed uniformly across all steps (same as
+        _run_episode) before returning.
 
         Returns:
             Tuple of (episode_reward, action_counts, transitions).
@@ -270,7 +279,6 @@ class Trainer:
         static_features = self.normalizer.encode_static(episode)
         action_counts = np.zeros(NUM_ACTIONS, dtype=np.int64)
         transitions: list[dict] = []
-        final_reward = 0.0
 
         for _ in range(self.env.num_rows):
             obs = self.env.get_observation()
@@ -289,14 +297,12 @@ class Trainer:
                 next_obs = self.env.get_observation()
                 next_dynamic = self.normalizer.encode_dynamic(next_obs)
                 next_mask = self.env.get_action_mask()
-            else:
-                final_reward = reward
 
             transitions.append({
                 "static_features": static_features,
                 "dynamic_features": dynamic_features,
                 "action": action,
-                "reward": reward,
+                "reward": reward,  # will be overwritten below
                 "next_dynamic_features": next_dynamic,
                 "done": done,
                 "action_mask": action_mask,
@@ -306,7 +312,13 @@ class Trainer:
             if done:
                 break
 
-        return final_reward, action_counts, transitions
+        n = len(transitions)
+        episode_reward = transitions[-1]["reward"] if n > 0 else 0.0
+        per_step = episode_reward / n if n > 0 else 0.0
+        for t in transitions:
+            t["reward"] = per_step
+
+        return episode_reward, action_counts, transitions
 
     def _select_action_train(
         self,

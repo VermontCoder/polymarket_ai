@@ -175,6 +175,45 @@ All 8 tasks from `docs/superpowers/plans/2026-03-20-trading-mechanics-overhaul.m
 
 ---
 
+---
+
+## Session: 2026-03-25 — Reward Function Redesign
+
+Replaced the mark-to-market (MTM) dense reward shaping with uniform episode reward redistribution. 277 tests pass.
+
+### Problem
+
+Two related bugs were discovered:
+
+1. **Broken `evaluate()`**: When MTM dense rewards were added, `evaluate()` and `evaluate_with_actions()` were never updated. They captured only the terminal step reward, which with MTM was a tiny correction term rather than the full P&L. Validation profit showed near-zero regardless of agent quality — model selection and early stopping were effectively non-functional.
+
+2. **Misleading training signal**: MTM rewards gave positive intermediate rewards whenever a held position's bid price rose, even in episodes that ultimately resolved as losses. For example: agent buys UP at 50¢, price drifts to 95¢ over 80 steps (positive MTM rewards each step), then BTC drops below the price-to-beat at resolution — final payout is 0. The agent received ~80 positive training signals for what was ultimately a losing trade. The correct feedback polarity (negative) appeared only at the last step.
+
+### Fix
+
+**`src/environment.py`**:
+- Removed `_prev_portfolio_value` state variable and `_portfolio_value_at()` method entirely.
+- `step()` reward block simplified to: `reward = self._compute_final_reward() if done else 0.0`
+
+**`src/trainer.py`** (`_run_episode()` and `collect_episode()`):
+- After the episode loop, the terminal reward is redistributed uniformly across all N rows:
+  ```python
+  per_step = episode_reward / n
+  for t in transitions:
+      t["reward"] = per_step
+  ```
+- Every row in a winning episode gets `+pnl/N`; every row in a losing episode gets `-loss/N`; do-nothing episodes get 0 everywhere.
+
+`evaluate()` and `evaluate_with_actions()` required no changes — with sparse terminal reward, the terminal step's reward is the full P&L/500, which these functions already read correctly.
+
+### Documentation Updated
+
+- `claude.md` — multi-trade mechanics, reward redistribution description
+- `docs/superpowers/specs/2026-03-17-polymarket-rl-agent-design.md` — reward calculation section, static dims (37), dynamic dims (12 with `is_sell_mode`), episode flow, action masking
+- `docs/superpowers/specs/2026-03-22-single-run-training-design.md` — added `--epsilon-end`, `--tau`, `--buffer-capacity` to CLI args table; corrected default values
+
+---
+
 ## Major discovery as of 3/20/2026. 
 
 Polymarket does not allow selling before the acquisition of shares. So the code needs to be modified such that you cannot sell shares unless you've bought them previously in the episode. Also, since now you can only sell if you've bought, we are going to remove the restriction that you can only take one action per episode. That would limit us to only buying, which maybe isn't the best restriction.

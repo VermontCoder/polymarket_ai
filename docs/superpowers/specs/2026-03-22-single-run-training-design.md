@@ -147,25 +147,31 @@ Single-run mode (default when `--grid-search` is not passed):
 
 ```bash
 python train.py \
-  --lr 2e-4 \
-  --lstm-hidden 64 \
+  --lr 1e-4 \
+  --lstm-hidden 32 \
   --seq-len 20 \
-  --epsilon-decay 150 \
+  --epsilon-decay 300 \
+  --epsilon-end 0.15 \
+  --tau 0.005 \
+  --buffer-capacity 50000 \
   --max-hours 12 \
   --num-gpus 4 \
-  --checkpoint-dir checkpoints/ \
+  --checkpoint-dir checkpoints/single_run \
   --resume
 ```
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--lr` | `2e-4` | Learning rate |
-| `--lstm-hidden` | `64` | LSTM hidden size |
+| `--lr` | `1e-4` | Learning rate |
+| `--lstm-hidden` | `32` | LSTM hidden size |
 | `--seq-len` | `20` | Sequence length |
-| `--epsilon-decay` | `150` | Epsilon decay steps |
+| `--epsilon-decay` | `300` | Epsilon decay steps (episodes) |
+| `--epsilon-end` | `0.15` | Epsilon floor for greedy exploration |
+| `--tau` | `0.005` | Soft target network update rate (Polyak) |
+| `--buffer-capacity` | `50000` | Replay buffer capacity |
 | `--max-hours` | `12` | Time cap in hours |
 | `--num-gpus` | all available | Number of rollout workers |
-| `--checkpoint-dir` | `checkpoints/` | Directory for checkpoints and log |
+| `--checkpoint-dir` | `checkpoints/single_run` | Directory for checkpoints and log |
 | `--resume` | off | Resume from latest checkpoint in dir |
 | `--grid-search` | off | Run grid search mode (unchanged) |
 

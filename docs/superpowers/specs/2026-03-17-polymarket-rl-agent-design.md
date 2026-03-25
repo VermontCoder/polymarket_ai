@@ -2,16 +2,16 @@
 
 ## Overview
 
-Build a reinforcement learning agent that profitably trades on Polymarket's BTC 5-minute prediction market. The agent observes market data row-by-row (2-second intervals) within each 5-minute episode and decides when and how to make a single trade to maximize profit.
+Build a reinforcement learning agent that profitably trades on Polymarket's BTC 5-minute prediction market. The agent observes market data row-by-row (2-second intervals) within each 5-minute episode and makes buy/sell decisions to maximize profit. Multiple trades are allowed per episode.
 
 ## Problem Definition
 
 - Every 5 minutes, BTC price is noted ("price to beat"). Market resolves UP or DOWN.
-- Agent sees ~60-150 rows per episode, can make **at most one trade** per episode.
+- Agent sees ~60-150 rows per episode. It may make multiple trades per episode (one action per row).
 - 9 discrete actions: do nothing (0), 4 taker actions (1-4), 4 maker/limit order actions (5-8).
-- Reward = profit/loss from trade, adjusted for Polymarket taker fees and maker rebates.
-- Dataset: Currently 620 episodes, user will expand to 6,000+.
-- 80/10/10 random shuffle split for train/validation/test. With 620 episodes, val and test are only 62 episodes each — thin but workable. At 6,000+ episodes, this becomes 600+ each, which is statistically robust. The proportions are standard and appropriate.
+- Reward = episode P&L normalized by 500, redistributed uniformly across all rows.
+- Dataset: 1,115+ episodes, expanding to 6,000+.
+- 80/10/10 random shuffle split for train/validation/test.
 
 ---
 
@@ -29,7 +29,7 @@ Build a reinforcement learning agent that profitably trades on Polymarket's BTC 
 | `diff_pct_hour` | float or null | value / training-set std, 0 if null; + `is_null` flag | 2 |
 | `avg_pct_variance_hour` | float or null | value / training-set std, 0 if null; + `is_null` flag | 2 |
 
-**Dynamic features (per row, 11 dims):**
+**Dynamic features (per row, 12 dims):**
 
 | Field | Raw | Encoding | Dims |
 |-------|-----|----------|------|
@@ -39,6 +39,7 @@ Build a reinforcement learning agent that profitably trades on Polymarket's BTC 
 | `down_ask` | 1-99 cents or null | value / 100, 0 if null; + `is_null` flag | 2 |
 | `diff_pct` | float or null | value / training-set std, 0 if null; + `is_null` flag | 2 |
 | `time_to_close` | milliseconds | value / 300,000, clamped to [0.0, 1.0] | 1 |
+| `is_sell_mode` | synthesized | 1.0 if agent holds shares, 0.0 otherwise | 1 |
 
 ### Normalization Rules
 
@@ -79,12 +80,13 @@ For each episode, before the AI sees any data:
    - `down_ask` -> if null: (0.0, 1.0); else: (value / 100, 0.0)
    - `diff_pct` -> if null: (0.0, 1.0); else: (value / train_std, 0.0)
    - `time_to_close` -> clamp(value / 300000, 0.0, 1.0)
-5. **Build action mask** for this row based on null bid/ask values and `has_acted` state.
-6. **Concatenate**: static features (35 dims) are constant; dynamic features (11 dims) change per row.
+   - `is_sell_mode` -> 1.0 if agent currently holds shares, 0.0 otherwise
+5. **Build action mask** for this row based on null bid/ask values, `shares_owned`, `share_direction`, and `pending_limit` state.
+6. **Concatenate**: static features (37 dims) are constant; dynamic features (12 dims) change per row.
 
 ### Input Neuron Mapping
 
-**Static encoder input (35 neurons):**
+**Static encoder input (37 neurons):**
 
 | Neuron Index | Field |
 |-------------|-------|
@@ -94,8 +96,10 @@ For each episode, before the AI sees any data:
 | 32 | `diff_pct_prev_session` is_null flag |
 | 33 | `diff_pct_hour` normalized value |
 | 34 | `diff_pct_hour` is_null flag |
+| 35 | `avg_pct_variance_hour` normalized value |
+| 36 | `avg_pct_variance_hour` is_null flag |
 
-**LSTM input per timestep (11 neurons):**
+**LSTM input per timestep (12 neurons):**
 
 | Neuron Index | Field |
 |-------------|-------|
@@ -110,6 +114,7 @@ For each episode, before the AI sees any data:
 | 8 | `diff_pct` normalized value |
 | 9 | `diff_pct` is_null flag |
 | 10 | `time_to_close` normalized and clamped |
+| 11 | `is_sell_mode` (1.0 = holding shares, 0.0 = looking to buy) |
 
 ---
 
@@ -117,13 +122,13 @@ For each episode, before the AI sees any data:
 
 ```
 Static Encoder:
-  Input: 35 static dims
-  Linear(35, 16) -> ReLU
+  Input: 37 static dims
+  Linear(37, 16) -> ReLU
   Output: 16-dim static embedding
 
 Dynamic Encoder (LSTM):
-  Input per timestep: 11 dynamic dims
-  LSTM(input_size=11, hidden_size=32, num_layers=1)
+  Input per timestep: 12 dynamic dims
+  LSTM(input_size=12, hidden_size=32, num_layers=1)
   Output per timestep: 32-dim hidden state
 
 Combiner + Q-Head:
@@ -132,7 +137,7 @@ Combiner + Q-Head:
   Linear(32, 9) -> Q-values for 9 actions
 ```
 
-**Total parameters: ~8,070** (slightly higher due to 11-dim LSTM input)
+**Total parameters: ~8,200**
 
 ### Key Design Choices
 
@@ -145,8 +150,10 @@ Combiner + Q-Head:
 
 After the Q-head produces 9 values:
 1. Set Q = -inf for any action whose required bid/ask is null.
-2. If `has_acted == True`, set Q = -inf for all actions except action 0 (do nothing).
-3. Limit order price constraints: if `bid + 1 > 99` or `ask - 1 < 1`, mask that action.
+2. If `pending_limit` is set, set Q = -inf for all actions except action 0 (do nothing).
+3. If `shares_owned == 0` (buy mode): mask all sell actions (2, 4, 6, 8).
+4. If `shares_owned > 0` (sell mode): mask all buy actions (1, 3, 5, 7); also mask sells for the wrong direction.
+5. Limit order price constraints: if `bid + 1 > 99` or `ask - 1 < 1`, mask that action.
 
 ### Modular Design
 
@@ -160,11 +167,13 @@ An abstract base model interface allows swapping architectures:
 
 ### Episode Flow
 
-1. Episode starts. `has_acted = False`. LSTM hidden state reset to zeros.
-2. Each timestep: environment provides observation -> agent produces Q-values -> action masking -> epsilon-greedy selection.
-3. If action != 0: `has_acted = True`. Trade recorded (type, price, direction). For maker orders, record limit price.
-4. Remaining timesteps: agent forced to "do nothing". For limit orders, each row checks if order fills.
-5. Episode ends. Compute reward.
+1. Episode starts. `shares_owned = 0.0`, `share_direction = ""`, `net_cash = 0.0`, `pending_limit = None`. LSTM hidden state reset to zeros.
+2. Each timestep: environment provides observation (including `is_sell_mode`) -> agent produces Q-values -> action masking -> epsilon-greedy selection.
+3. If action is a buy (1, 3, 5, 7): `shares_owned` is set; agent enters sell mode. For limit buys, a pending order is recorded.
+4. If action is a sell (2, 4, 6, 8): `shares_owned` is cleared; agent returns to buy mode. For limit sells, a pending order is recorded.
+5. While a limit order is pending, only action 0 is available. Each subsequent row checks if the limit fills (buy fills if ask <= order price; sell fills if bid >= order price).
+6. This buy→sell cycle may repeat multiple times within the episode.
+7. Episode ends. Compute terminal reward.
 
 ### The 9 Actions
 
@@ -185,7 +194,7 @@ An abstract base model interface allows swapping architectures:
 - **Sell orders**: Filled if a future row's bid >= order price.
 - **Buy orders**: Filled if a future row's ask <= order price.
 - Fill at the **order's placed price**, not the market price at fill time.
-- Unfilled orders at episode end: reward = 0.
+- Unfilled orders at episode end: cancelled, no cash effect.
 
 ### Fee Structure (Crypto Markets)
 
@@ -193,27 +202,35 @@ An abstract base model interface allows swapping architectures:
 ```
 fee = 0.02 * price * (1 - price / 100)
 ```
-Where `price` is in cents. Peak fee: 0.5c at 50c. Rounded to 4 decimal places, minimum 0.0001c.
+Where `price` is in cents. Peak fee: ~0.5c at 50c. Rounded to 4 decimal places, minimum 0.0001c.
 
 **Maker rebate:** 20% of the taker fee that would have been charged at the trade price.
 
+**Fee absorption into shares:** Rather than tracking fees as separate cash flows, the fee or rebate is absorbed into the effective share count. Cash outflow on a buy is always `5 * price`. The resulting shares are `5 * (1 - fee/price)` for taker or `5 * (1 + rebate/price)` for maker, rounded to 2 decimal places.
+
 ### Reward Calculation
 
-All values in cents:
+**Terminal reward (end of episode):**
+```
+total_pnl = net_cash + end_payout
+episode_reward = total_pnl / REWARD_NORMALIZATION  (REWARD_NORMALIZATION = 500)
+```
 
-**Buying a share:**
-- Cost = share price (+ taker fee, or - maker rebate)
-- At episode end: receive 100c if correct side, else 0c
-- Reward = payout - cost
+Where:
+- `net_cash` = sum of all sell proceeds minus sum of all buy costs (in cents)
+- `end_payout` = `shares_owned * 100` if the outcome matches `share_direction`, else 0
+- `REWARD_NORMALIZATION = 500` (5 shares × $1 maximum payout × 100¢/$)
 
-**Selling a share:**
-- Received = share price (- taker fee, or + maker rebate)
-- At episode end: pay 100c if the market resolves in the direction of the share you sold (e.g., sold UP and outcome=UP means you owe 100c). If the market resolves against the share you sold (e.g., sold UP and outcome=DOWN), you owe nothing.
-- Reward = received - payout_owed (where payout_owed is 100c or 0c)
+**Uniform redistribution across all rows:**
 
-**No action / unfilled limit order:** Reward = 0
+The terminal reward is then divided evenly across all N rows in the episode. Every row in the replay buffer receives `episode_reward / N`. This ensures:
+- Winning episodes: every step gets a small positive reward
+- Losing episodes: every step gets a small negative reward
+- Do-nothing episodes: every step gets 0
 
-**Normalization:** Reward divided by 100 (max gain/loss is ~99c) to scale roughly to [-1, 1].
+This prevents a misleading scenario where intermediate per-step rewards have the opposite polarity from the final outcome (e.g., price rises through an episode but crashes at resolution — the agent should not receive positive feedback during those steps).
+
+**No action / unfilled limit order:** Contributes 0 to `net_cash` at episode end.
 
 ---
 
@@ -224,20 +241,22 @@ All values in cents:
 - **Double DQN**: Online network selects best action; target network evaluates its Q-value. Reduces overestimation.
 - **DRQN-style sequence training**: Sample sub-sequences of length L from episodes. LSTM hidden state initialized to zeros at sub-sequence start ("burn-in").
 - **Prioritized Experience Replay (PER)**: Prioritize transitions with large TD errors.
-- Only store pre-action timesteps in the replay buffer (not the forced "do nothing" after acting).
+- All timesteps in an episode are stored in the replay buffer (including post-action rows).
 
 ### Hyperparameters
 
 | Parameter | Value |
 |-----------|-------|
-| Learning rate | 1e-4 |
+| Learning rate | 1e-4 (configurable via `--lr`) |
 | Optimizer | Adam with weight_decay=1e-4 |
 | Batch size | 32 |
 | Gamma (discount) | 0.99 |
-| Target update tau | 0.005 (soft Polyak) |
-| Epsilon | 1.0 -> 0.05, linear decay over 300 episodes |
-| Replay buffer size | 50,000 transitions |
-| Sub-sequence length L | 20 timesteps |
+| Target update tau | 0.005 (soft Polyak, configurable via `--tau`) |
+| Epsilon start | 1.0 |
+| Epsilon end | 0.15 (configurable via `--epsilon-end`) |
+| Epsilon decay | linear over `--epsilon-decay` episodes (default 300), cycling per epoch |
+| Replay buffer size | 50,000 transitions (configurable via `--buffer-capacity`) |
+| Sub-sequence length L | 20 timesteps (configurable via `--seq-len`) |
 | Gradient clip norm | 1.0 |
 | PER alpha | 0.6 |
 | PER beta | 0.4 -> 1.0 (annealed) |
@@ -255,7 +274,6 @@ Protocol:
 - Evaluate on validation set every 50 training episodes.
 - Metric: total profit across all validation episodes.
 - Select by median validation profit.
-- Early stopping: 50 eval checkpoints without improvement.
 
 ### How the Validation Set Tunes the Model
 
@@ -263,7 +281,7 @@ The validation set serves two purposes:
 
 1. **Hyperparameter selection**: Each grid search configuration is evaluated on the validation set. The configuration producing the highest median validation profit (across 3 seeds) is selected. This tunes learning rate, LSTM hidden size, sub-sequence length, and epsilon decay schedule.
 
-2. **Early stopping**: During training, validation profit is checked periodically. If it stops improving, training halts — preventing overfitting to the training data. The checkpoint with the best validation profit is kept as the final model.
+2. **Best checkpoint tracking**: During training, the checkpoint with the highest validation profit is saved as `checkpoint_best.pt`. This is the model used for final evaluation.
 
 3. **Structural decisions** (layer count, dropout rate, static encoder size) are fixed by design based on the dataset size and problem constraints. They are not tuned via the validation set because the search space would be too large relative to the data.
 
@@ -271,13 +289,7 @@ The **test set** is held out entirely and used only for final evaluation — the
 
 ### TensorBoard Logging
 
-- Training loss per step
-- Q-value distribution
-- Epsilon schedule
-- Per-episode reward
-- Validation profit at each checkpoint
-- Gradient norms
-- Action distribution (how often each action is chosen)
+TensorBoard logging was removed in the single-run training path. Progress is tracked via the Rich terminal display and a JSONL training log instead (see single-run training design spec).
 
 ---
 
@@ -285,31 +297,7 @@ The **test set** is held out entirely and used only for final evaluation — the
 
 ### Display Format
 
-Full row-by-row output for **every episode**, even in multi-episode runs:
-
-```
-Episode: 2026-03-14T17:20:00Z | Outcome: UP | Price to beat: $70,679.78
-Player: Random Agent
----------------------------------------------------------------------
-Row 12 | Time left: 2m 01s | BTC diff: +0.018%
-  UP:  bid=65c ask=66c | DOWN: bid=34c ask=35c  (N/A shown for null prices)
-  Action: DO NOTHING
----------------------------------------------------------------------
-Row 13 | Time left: 1m 59s | BTC diff: +0.021%
-  UP:  bid=66c ask=67c | DOWN: bid=33c ask=34c
-  Action: BUY UP @ 67c (taker)
-  >>> Agent locked in. Watching remaining rows...
----------------------------------------------------------------------
-Row 14 | Time left: 1m 57s | BTC diff: +0.019%
-  UP:  bid=65c ask=66c | DOWN: bid=34c ask=35c
-  [Locked - no action]
-  ...
----------------------------------------------------------------------
-Episode Result: UP | Payout: 100c | Cost: 67c | Fee: -0.55c
-  Profit: +32.45c
-=====================================================================
-Cumulative: Episodes=1 | Total Profit: +32.45c
-```
+Full row-by-row output showing trades, prices, and fee types as they happen. Limit order fills are announced inline when they occur. Episode summary shows all completed trades with a full accounting.
 
 ### Players
 
@@ -332,11 +320,14 @@ Cumulative: Episodes=1 | Total Profit: +32.45c
 - Null bid/ask encodes to (0, is_null=1)
 - Normalization uses training-set statistics only
 - One-hot encoding for hour/day is correct dimensions
+- `is_sell_mode` encodes correctly at dim 11
 
 ### test_environment.py
-- At most 0 or 1 action per episode (never 2+)
 - Action masking blocks null bid/ask actions
-- Action masking blocks all non-zero actions after agent has acted
+- Action masking blocks sells when shares_owned == 0
+- Action masking blocks buys when shares_owned > 0
+- Action masking blocks wrong-direction sells
+- Only action 0 allowed while a pending limit order is active
 - Taker fee matches Polymarket formula at various prices (1c, 25c, 50c, 75c, 99c)
 - Maker rebate = 20% of taker fee
 - Limit order fills when market price reaches order price
@@ -344,20 +335,25 @@ Cumulative: Episodes=1 | Total Profit: +32.45c
 - Reward = 0 for no-action and unfilled limit orders
 - All 8 trade/outcome combinations produce correct profit/loss
 - Limit order price boundary checks (ask-1 >= 1, bid+1 <= 99)
+- Multi-trade within an episode accumulates correctly
 
 ### test_anti_cheat.py
 - Agent cannot access `outcome`, `end_price`, `current_price`, `diff_usd`, `start_price`, `session_id`, `timestamp`, or future rows at decision time
-- Agent only sees the 10 allowed fields: hour, day, diff_pct_prev_session, diff_pct_hour, up_bid, up_ask, down_bid, down_ask, diff_pct, time_to_close
+- Allowed observation fields: hour, day, diff_pct_prev_session, diff_pct_hour, up_bid, up_ask, down_bid, down_ask, diff_pct, time_to_close, is_sell_mode
 
 ### test_agents.py
 - Random agent only selects from unmasked actions
-- Random agent takes at most 1 action per episode
 - DQN agent produces valid action selections
 
 ### test_replay_buffer.py
 - PER correctly prioritizes high-TD-error transitions
 - Sub-sequence sampling respects episode boundaries
-- Post-action timesteps are excluded
+
+### test_trainer.py
+- `_run_episode()` stores transitions for all rows
+- `collect_episode()` stores transitions for all rows
+- Uniform reward redistribution: all transitions get `episode_reward / N`
+- `evaluate()` returns correct episode P&L (terminal reward × REWARD_NORMALIZATION / 100)
 
 ---
 
@@ -374,9 +370,14 @@ Cumulative: Episodes=1 | Total Profit: +32.45c
 │   │   ├── __init__.py
 │   │   ├── base.py             # Abstract model interface
 │   │   ├── lstm_dqn.py         # LSTM-DQN (primary)
-│   │   └── stacked_dqn.py     # Stacked DQN (baseline)
+│   │   └── stacked_dqn.py      # Stacked DQN (baseline)
 │   ├── replay_buffer.py        # PER with DRQN-style sequence sampling
-│   ├── trainer.py              # Training loop, Double DQN, TensorBoard
+│   ├── trainer.py              # Training loop, Double DQN
+│   ├── train_display.py        # Rich terminal display for single-run training
+│   ├── train_logger.py         # JSONL checkpoint logging
+│   ├── rollout_worker.py       # Subprocess worker for parallel episode collection
+│   ├── grid_display.py         # Rich display for grid search
+│   ├── grid_utils.py           # Grid search config utilities
 │   ├── agents/
 │   │   ├── __init__.py
 │   │   ├── random_agent.py     # Random action selection
@@ -387,8 +388,9 @@ Cumulative: Episodes=1 | Total Profit: +32.45c
 │   ├── test_environment.py
 │   ├── test_replay_buffer.py
 │   ├── test_agents.py
+│   ├── test_trainer.py
 │   └── test_anti_cheat.py
 ├── train.py                     # Training entry point
 ├── evaluate.py                  # Visibility mode / evaluation entry point
-└── requirements.txt             # torch, tensorboard, pytest, numpy
+└── requirements.txt             # torch, rich, pytest, numpy
 ```
